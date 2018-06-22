@@ -18,6 +18,7 @@ import (
     "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/gtime"
+    "gitee.com/johng/gf/g/os/genv"
 )
 
 type Message struct {
@@ -41,6 +42,14 @@ func main() {
     esAuthPass := gcmd.Option.Get("es-auth-pass")
     kafkaUrl   := gcmd.Option.Get("kafka-url")
     kafkaTopic := gcmd.Option.Get("kafka-topic")
+    if esUrl == "" {
+        esUrl      = genv.Get("log-analyzer.es-url")
+        esAuthUser = genv.Get("log-analyzer.es-auth-user")
+        esAuthPass = genv.Get("log-analyzer.es-auth-pass")
+        kafkaUrl   = genv.Get("log-analyzer.kafka-url")
+        kafkaTopic = genv.Get("log-analyzer.kafka-topic")
+    }
+
     if esUrl == "" {
         panic("Incomplete ElasticSearch setting")
     }

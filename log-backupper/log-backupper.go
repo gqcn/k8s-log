@@ -19,6 +19,7 @@ import (
     "gitee.com/johng/gf/g/util/gregx"
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/os/gfile"
+    "gitee.com/johng/gf/g/os/genv"
 )
 
 const (
@@ -32,11 +33,10 @@ var (
 
 func main() {
     // input params check
-    kafkaUrl   = gcmd.Option.Get("kafka-url")
-
-    // @todo for test
-    kafkaUrl   = "127.0.0.1:9092"
-
+    kafkaUrl = gcmd.Option.Get("kafka-url")
+    if kafkaUrl == "" {
+        kafkaUrl = genv.Get("log-backupper.kafka-url")
+    }
     if kafkaUrl == "" {
         panic("Incomplete Kafka setting")
     }
