@@ -43,11 +43,11 @@ func main() {
     kafkaUrl   := gcmd.Option.Get("kafka-url")
     kafkaTopic := gcmd.Option.Get("kafka-topic")
     if esUrl == "" {
-        esUrl      = genv.Get("log-analyzer.es-url")
-        esAuthUser = genv.Get("log-analyzer.es-auth-user")
-        esAuthPass = genv.Get("log-analyzer.es-auth-pass")
-        kafkaUrl   = genv.Get("log-analyzer.kafka-url")
-        kafkaTopic = genv.Get("log-analyzer.kafka-topic")
+        esUrl      = genv.Get("es-url")
+        esAuthUser = genv.Get("es-auth-user")
+        esAuthPass = genv.Get("es-auth-pass")
+        kafkaUrl   = genv.Get("kafka-url")
+        kafkaTopic = genv.Get("kafka-topic")
     }
 
     if esUrl == "" {
