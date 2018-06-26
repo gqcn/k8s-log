@@ -35,7 +35,7 @@ func main() {
     // input params check
     kafkaUrl = gcmd.Option.Get("kafka-url")
     if kafkaUrl == "" {
-        kafkaUrl = genv.Get("log-backupper.kafka-url")
+        kafkaUrl = genv.Get("kafka-url")
     }
     if kafkaUrl == "" {
         panic("Incomplete Kafka setting")
