@@ -97,8 +97,9 @@ func handlerKafkaMessage(message *gkafka.Message) {
         }
         // 日志分类，格式规范：/var/log/medlinker/{AppName}/{Category}/YYYY-MM-DD.log
         array := strings.Split(gfile.Dir(msg.FilePath), "/")
-        if len(array) > 4 {
-            msg.Category = array[4]
+        if len(array) >= 5 {
+            // 注意：array[0]为空
+            msg.Category = array[5]
         }
         checkPatternWithMsg(msg)
         // 处理时间中的格式，转换为标准格式
