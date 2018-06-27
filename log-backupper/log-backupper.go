@@ -4,7 +4,7 @@
 // 3. 将kafka对应topic中的消息转储到固定的临时的日志文件中；
 // 4. 定时将前一天的数据进行压缩归档并删除(暂时不做处理，后续可以依靠当前程序或者logrotate工具实现)；
 // Usage:
-// ./log-backupper --kafka-url=127.0.0.1:9092
+// ./log-backupper --kafka-addr=127.0.0.1:9092
 
 package main
 
@@ -26,18 +26,18 @@ const (
     TOPIC_AUTO_CHECK_INTERVAL = 5 // (秒)kafka topic检测时间间隔
 )
 var (
-    kafkaUrl   string
+    kafkaAddr   string
     kafkaTopic string
     topicSet   = gset.NewStringSet()
 )
 
 func main() {
     // input params check
-    kafkaUrl = gcmd.Option.Get("kafka-url")
-    if kafkaUrl == "" {
-        kafkaUrl = genv.Get("kafka-url")
+    kafkaAddr = gcmd.Option.Get("kafka-addr")
+    if kafkaAddr == "" {
+        kafkaAddr = genv.Get("kafka-addr")
     }
-    if kafkaUrl == "" {
+    if kafkaAddr == "" {
         panic("Incomplete Kafka setting")
     }
 
@@ -74,7 +74,7 @@ func handlerKafkaTopic(topic string) {
 // 创建kafka客户端
 func newKafkaClient(topic ... string) *gkafka.Client {
     kafkaConfig        := gkafka.NewConfig()
-    kafkaConfig.Servers = kafkaUrl
+    kafkaConfig.Servers = kafkaAddr
     if len(topic) > 0 {
         kafkaConfig.Topics = topic[0]
     }

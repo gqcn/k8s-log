@@ -2,7 +2,7 @@
 // 1. 为兼容多种应用端的日志格式，这里划分的日志数据格式粒度比较大，并且很灵活；
 // 2. 将kafka中的消息按照自定义的规则处理后转储到ElasticSearch中；
 // Usage:
-// ./log-analyzer --es-url=http://127.0.0.1:9200 --kafka-url=127.0.0.1:9092 --kafka-topic=test
+// ./log-analyzer --es-url=http://127.0.0.1:9200 --kafka-addr=127.0.0.1:9092 --kafka-topic=test
 
 package main
 
@@ -40,20 +40,20 @@ func main() {
     esUrl      := gcmd.Option.Get("es-url")
     esAuthUser := gcmd.Option.Get("es-auth-user")
     esAuthPass := gcmd.Option.Get("es-auth-pass")
-    kafkaUrl   := gcmd.Option.Get("kafka-url")
+    kafkaAddr  := gcmd.Option.Get("kafka-addr")
     kafkaTopic := gcmd.Option.Get("kafka-topic")
     if esUrl == "" {
         esUrl      = genv.Get("es-url")
         esAuthUser = genv.Get("es-auth-user")
         esAuthPass = genv.Get("es-auth-pass")
-        kafkaUrl   = genv.Get("kafka-url")
+        kafkaAddr  = genv.Get("kafka-addr")
         kafkaTopic = genv.Get("kafka-topic")
     }
 
     if esUrl == "" {
         panic("Incomplete ElasticSearch setting")
     }
-    if kafkaUrl == "" || kafkaTopic == "" {
+    if kafkaAddr == "" || kafkaTopic == "" {
         panic("Incomplete Kafka setting")
     }
     // ElasticSearch client
@@ -69,7 +69,7 @@ func main() {
     }
     // Kafka client
     kafkaConfig        := gkafka.NewConfig()
-    kafkaConfig.Servers = kafkaUrl
+    kafkaConfig.Servers = kafkaAddr
     kafkaConfig.Topics  = kafkaTopic
     kafkaConfig.GroupId = "group_" + kafkaTopic + "_analyzer"
     kafkaClient = gkafka.NewClient(kafkaConfig)
