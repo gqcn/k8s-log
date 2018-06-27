@@ -43,11 +43,11 @@ func main() {
     kafkaAddr  := gcmd.Option.Get("kafka-addr")
     kafkaTopic := gcmd.Option.Get("kafka-topic")
     if esUrl == "" {
-        esUrl      = genv.Get("es-url")
-        esAuthUser = genv.Get("es-auth-user")
-        esAuthPass = genv.Get("es-auth-pass")
-        kafkaAddr  = genv.Get("kafka-addr")
-        kafkaTopic = genv.Get("kafka-topic")
+        esUrl      = genv.Get("ES_URL")
+        esAuthUser = genv.Get("ES_AUTH_USER")
+        esAuthPass = genv.Get("ES_AUTH_PASS")
+        kafkaAddr  = genv.Get("KAFKA_ADDR")
+        kafkaTopic = genv.Get("KAFKA_TOPIC")
     }
 
     if esUrl == "" {

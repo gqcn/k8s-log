@@ -33,9 +33,9 @@ var (
 
 func main() {
     // input params check
-    kafkaAddr = gcmd.Option.Get("kafka-addr")
+    kafkaAddr = gcmd.Option.Get("KAFKA_ADDR")
     if kafkaAddr == "" {
-        kafkaAddr = genv.Get("kafka-addr")
+        kafkaAddr = genv.Get("KAFKA_ADDR")
     }
     if kafkaAddr == "" {
         panic("Incomplete Kafka setting")
@@ -92,13 +92,8 @@ func handlerKafkaMessage(message *gkafka.Message) {
         if msgTime.IsZero() {
             msgTime = parserFileBeatTime(j.GetString("@timestamp"))
         }
-        // 规范：/var/log/medlinker-backup/{AppName}/{YYYY-MM-DD}/{NodeName}_{PodName}.log
-        path := fmt.Sprintf("/var/log/medlinker-backup/%s/%s/%s_%s.log",
-            j.GetString("fields.appname"),
-            msgTime.Format("2006-01-02"),
-            j.GetString("fields.hostname"),
-            j.GetString("fields.podname"),
-        )
+        // 规范：/var/log/medlinker-backup/{AppName/Topic}/{YYYY-MM-DD}.log
+        path := fmt.Sprintf("/var/log/medlinker-backup/%s/%s.log", message.Topic, msgTime.Format("2006-01-02"))
         if err := gfile.PutContentsAppend(path, content + "\n"); err != nil {
             glog.Error(err)
         }
