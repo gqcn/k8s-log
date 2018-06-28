@@ -97,7 +97,7 @@ func handlerKafkaMessage(message *gkafka.Message) {
         }
         // 日志分类，格式规范：/var/log/medlinker/{AppName}/{Category}/YYYY-MM-DD.log
         array := strings.Split(gfile.Dir(msg.FilePath), "/")
-        if len(array) >= 5 {
+        if len(array) >= 6 {
             // 注意：array[0]为空
             msg.Category = array[5]
         }

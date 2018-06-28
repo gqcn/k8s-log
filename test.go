@@ -7,5 +7,8 @@ import (
 )
 
 func main() {
-    fmt.Println(strings.Split(gfile.Dir("/var/log/medlinker/test-app/test.log"), "/"))
+    a := strings.Split(gfile.Dir("/var/log/medlinker/test-app/test.log"), "/")
+    for k, v := range a {
+        fmt.Println(k, v)
+    }
 }
