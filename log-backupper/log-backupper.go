@@ -29,10 +29,10 @@ const (
     TOPIC_AUTO_CHECK_INTERVAL   = 5      // (秒)kafka topic检测时间间隔
     ARCHIVE_AUTO_CHECK_INTERVAL = 86400  // (秒)自动压缩归档检测时间间隔
 )
+
 var (
-    kafkaAddr   string
-    kafkaTopic string
-    topicSet   = gset.NewStringSet()
+    kafkaAddr string
+    topicSet  = gset.NewStringSet()
 )
 
 func main() {
@@ -106,10 +106,11 @@ func newKafkaClient(topic ... string) *gkafka.Client {
     kafkaConfig        := gkafka.NewConfig()
     kafkaConfig.Servers = kafkaAddr
     if len(topic) > 0 {
-        kafkaConfig.Topics = topic[0]
+        kafkaConfig.Topics  = topic[0]
+        kafkaConfig.GroupId = "group_" + topic[0] + "_backupper"
+    } else {
+        kafkaConfig.GroupId = "group_default_backupper"
     }
-
-    kafkaConfig.GroupId = "group_" + kafkaTopic + "_backupper"
     return gkafka.NewClient(kafkaConfig)
 }
 

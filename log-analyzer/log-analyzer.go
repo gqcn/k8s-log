@@ -19,6 +19,7 @@ import (
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/os/genv"
+    "gitee.com/johng/gf/g/container/gset"
 )
 
 type Message struct {
@@ -30,62 +31,93 @@ type Message struct {
     HostName   string // 来源Host
     FilePath   string // 来源文件路径
 }
+
+const (
+    TOPIC_AUTO_CHECK_INTERVAL   = 5 // (秒)kafka topic检测时间间隔
+)
+
 var (
-    kafkaClient   *gkafka.Client
-    elasticClient *elastic.Client
+    esUrl      = gcmd.Option.Get("es-url")
+    esAuthUser = gcmd.Option.Get("es-auth-user")
+    esAuthPass = gcmd.Option.Get("es-auth-pass")
+    kafkaAddr  = gcmd.Option.Get("kafka-addr")
+    topicSet   = gset.NewStringSet()
 )
 
 func main() {
-    // input params check
-    esUrl      := gcmd.Option.Get("es-url")
-    esAuthUser := gcmd.Option.Get("es-auth-user")
-    esAuthPass := gcmd.Option.Get("es-auth-pass")
-    kafkaAddr  := gcmd.Option.Get("kafka-addr")
-    kafkaTopic := gcmd.Option.Get("kafka-topic")
     if esUrl == "" {
         esUrl      = genv.Get("ES_URL")
         esAuthUser = genv.Get("ES_AUTH_USER")
         esAuthPass = genv.Get("ES_AUTH_PASS")
         kafkaAddr  = genv.Get("KAFKA_ADDR")
-        kafkaTopic = genv.Get("KAFKA_TOPIC")
     }
-
     if esUrl == "" {
         panic("Incomplete ElasticSearch setting")
     }
-    if kafkaAddr == "" || kafkaTopic == "" {
+    if kafkaAddr == "" {
         panic("Incomplete Kafka setting")
     }
-    // ElasticSearch client
-    esOptions := make([]elastic.ClientOptionFunc, 0)
-    esOptions  = append(esOptions, elastic.SetURL(esUrl))
-    if esAuthUser != "" {
-        esOptions = append(esOptions, elastic.SetBasicAuth(esAuthUser, esAuthPass))
-    }
-    if client, err := elastic.NewClient(esOptions...); err == nil {
-        elasticClient = client
-    } else {
-        panic(err)
-    }
-    // Kafka client
-    kafkaConfig        := gkafka.NewConfig()
-    kafkaConfig.Servers = kafkaAddr
-    kafkaConfig.Topics  = kafkaTopic
-    kafkaConfig.GroupId = "group_" + kafkaTopic + "_analyzer"
-    kafkaClient = gkafka.NewClient(kafkaConfig)
 
-    // 监听处理循环
+    kafkaClient := newKafkaClient()
+    for {
+        if topics, err := kafkaClient.Topics(); err == nil {
+            for _, topic := range topics {
+                if !topicSet.Contains(topic) {
+                    topicSet.Add(topic)
+                    go handlerKafkaTopic(topic)
+                }
+            }
+        } else {
+            glog.Error(err)
+        }
+        time.Sleep(TOPIC_AUTO_CHECK_INTERVAL*time.Second)
+    }
+}
+
+// 异步处理topic日志
+func handlerKafkaTopic(topic string) {
+    kafkaClient   := newKafkaClient(topic)
+    elasticClient := newElasticClient()
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
-            go handlerKafkaMessage(msg)
+            // 异步处理消息
+            go handlerKafkaMessage(msg, elasticClient)
         } else {
             glog.Error(err)
         }
     }
 }
 
+// 创建kafka客户端
+func newKafkaClient(topic ... string) *gkafka.Client {
+    kafkaConfig        := gkafka.NewConfig()
+    kafkaConfig.Servers = kafkaAddr
+    if len(topic) > 0 {
+        kafkaConfig.Topics  = topic[0]
+        kafkaConfig.GroupId = "group_" + topic[0] + "_backupper"
+    } else {
+        kafkaConfig.GroupId = "group_default_backupper"
+    }
+    return gkafka.NewClient(kafkaConfig)
+}
+
+// 创建ElasticSearch客户端
+func newElasticClient() *elastic.Client {
+    esOptions := make([]elastic.ClientOptionFunc, 0)
+    esOptions  = append(esOptions, elastic.SetURL(esUrl))
+    if esAuthUser != "" {
+        esOptions = append(esOptions, elastic.SetBasicAuth(esAuthUser, esAuthPass))
+    }
+    if client, err := elastic.NewClient(esOptions...); err == nil {
+        return client
+    } else {
+        glog.Error(err)
+    }
+    return nil
+}
+
 // 处理kafka消息
-func handlerKafkaMessage(message *gkafka.Message) {
+func handlerKafkaMessage(message *gkafka.Message, elasticClient *elastic.Client) {
     if j, err := gjson.DecodeToJson(message.Value); err == nil {
         j.SetViolenceCheck(false)
         msg := &Message {
@@ -106,12 +138,15 @@ func handlerKafkaMessage(message *gkafka.Message) {
         if t, err := gtime.StrToTime(msg.Time); err == nil {
             msg.Time =t.Format("2006-01-02 15:04:05")
         }
+        // 向ElasticSearch发送解析后的数据
         if data, err := gjson.Encode(msg); err == nil {
-            //fmt.Println(string(message.Value))
-            //b, _ := gparser.VarToJsonIndent(msg)
-            //fmt.Println(string(b))
-            //fmt.Println()
-            sendToElasticSearch(message.Topic, string(data))
+            index :=  "log-" + message.Topic
+            if _, err := elasticClient.Index().
+                Index(index).Type(index).
+                BodyString(string(data)).
+                Do(context.Background()); err != nil {
+                glog.Error(err)
+            }
         } else {
             glog.Error(err)
         }
@@ -172,12 +207,4 @@ func parserFileBeatTime(datetime string) string {
         return t.Format("2006-01-02 15:04:05")
     }
     return ""
-}
-
-// 向ElasticSearch发送解析后的数据
-func sendToElasticSearch(topic string, data string) {
-    index :=  "log-" + topic
-    if _, err := elasticClient.Index().Index(index).Type(index).BodyString(data).Do(context.Background()); err != nil {
-        glog.Error(err)
-    }
 }
