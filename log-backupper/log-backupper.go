@@ -20,10 +20,14 @@ import (
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/genv"
+    "strings"
+    "os/exec"
+    "os"
 )
 
 const (
-    TOPIC_AUTO_CHECK_INTERVAL = 5 // (秒)kafka topic检测时间间隔
+    TOPIC_AUTO_CHECK_INTERVAL   = 5      // (秒)kafka topic检测时间间隔
+    ARCHIVE_AUTO_CHECK_INTERVAL = 86400  // (秒)自动压缩归档检测时间间隔
 )
 var (
     kafkaAddr   string
@@ -32,7 +36,6 @@ var (
 )
 
 func main() {
-    // input params check
     kafkaAddr = gcmd.Option.Get("KAFKA_ADDR")
     if kafkaAddr == "" {
         kafkaAddr = genv.Get("KAFKA_ADDR")
@@ -40,6 +43,7 @@ func main() {
     if kafkaAddr == "" {
         panic("Incomplete Kafka setting")
     }
+    go handlerArchiveLoop()
 
     kafkaClient := newKafkaClient()
     for {
@@ -57,12 +61,38 @@ func main() {
     }
 }
 
+// 自动归档检查循环，归档使用tar工具实现
+func handlerArchiveLoop() {
+    for {
+        if array , err := gfile.Glob("/var/log/medlinker-backup/*/*.log"); err == nil && len(array) > 0 {
+            for _, path := range array {
+                if !strings.EqualFold(gfile.Basename(path), gtime.Format("2006-01-02.log")) {
+                    archivePath := path + ".tar.bz2"
+                    if gfile.Exists(archivePath) {
+                        glog.Errorfln("archive for %s already exists", path)
+                        continue
+                    }
+                    if err := os.Chdir(gfile.Dir(path)); err != nil {
+                        glog.Error(err)
+                        continue
+                    }
+                    cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path), "--remove-files")
+                    if err := cmd.Run(); err != nil {
+                        glog.Error(err)
+                    }
+                }
+            }
+        }
+        time.Sleep(ARCHIVE_AUTO_CHECK_INTERVAL*time.Second)
+    }
+}
+
+
 // 异步处理topic日志
 func handlerKafkaTopic(topic string) {
     kafkaClient := newKafkaClient(topic)
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
-            fmt.Println(msg.Topic, string(msg.Value))
             // 不使用异步，顺序写入
             handlerKafkaMessage(msg)
         } else {
@@ -102,13 +132,9 @@ func handlerKafkaMessage(message *gkafka.Message) {
 
 // 从内容中解析出日志的时间，并返回对应的日期对象
 func getTimeFromContent(content string) time.Time {
-    match, _ := gregx.MatchString(`(\d{4}-\d{2}-\d{2})[\sT]{0,1}(\d{2}:\d{2}:\d{2}){0,1}\.{0,1}(\d{0,9})([\sZ]{0,1})([\+-]{0,1})([:\d]*)`, content)
-    if len(match) >= 3 {
-        str := match[1]
-        if match[2] != "" {
-            str += " " + match[2]
-        }
-        if t, err := gtime.StrToTime(str); err == nil {
+    match, _ := gregx.MatchString(gtime.TIME_REAGEX_PATTERN, content)
+    if len(match) >= 1 {
+        if t, err := gtime.StrToTime(match[0]); err == nil {
             return t
         }
     }
