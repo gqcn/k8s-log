@@ -2,13 +2,10 @@ package main
 
 import (
     "fmt"
-    "strings"
-    "gitee.com/johng/gf/g/os/gfile"
+    "gitee.com/johng/gf/g/util/gconv"
 )
 
 func main() {
-    a := strings.Split(gfile.Dir("/var/log/medlinker/test-app/test.log"), "/")
-    for k, v := range a {
-        fmt.Println(k, v)
-    }
+    fmt.Println(gconv.Bool("false"))
+    fmt.Println(gconv.Bool("true"))
 }

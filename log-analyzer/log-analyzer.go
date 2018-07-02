@@ -20,6 +20,7 @@ import (
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/container/gset"
+    "gitee.com/johng/gf/g/util/gconv"
 )
 
 type Message struct {
@@ -41,11 +42,14 @@ var (
     esAuthUser = gcmd.Option.Get("es-auth-user")
     esAuthPass = gcmd.Option.Get("es-auth-pass")
     kafkaAddr  = gcmd.Option.Get("kafka-addr")
+    debug      = gconv.Bool(gcmd.Option.Get("debug"))
     topicSet   = gset.NewStringSet()
+
 )
 
 func main() {
     if esUrl == "" {
+        debug      = gconv.Bool(genv.Get("DEBUG"))
         esUrl      = genv.Get("ES_URL")
         esAuthUser = genv.Get("ES_AUTH_USER")
         esAuthPass = genv.Get("ES_AUTH_PASS")
@@ -58,11 +62,16 @@ func main() {
         panic("Incomplete Kafka setting")
     }
 
+    if debug {
+        glog.SetDebug(true)
+    }
+
     kafkaClient := newKafkaClient()
     for {
         if topics, err := kafkaClient.Topics(); err == nil {
             for _, topic := range topics {
                 if !topicSet.Contains(topic) {
+                    glog.Debugfln("add new topic handle: %s", topic)
                     topicSet.Add(topic)
                     go handlerKafkaTopic(topic)
                 }
@@ -80,7 +89,7 @@ func handlerKafkaTopic(topic string) {
     elasticClient := newElasticClient()
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
-            // 异步处理消息
+            glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
             go handlerKafkaMessage(msg, elasticClient)
         } else {
             glog.Error(err)
@@ -94,9 +103,9 @@ func newKafkaClient(topic ... string) *gkafka.Client {
     kafkaConfig.Servers = kafkaAddr
     if len(topic) > 0 {
         kafkaConfig.Topics  = topic[0]
-        kafkaConfig.GroupId = "group_" + topic[0] + "_backupper"
+        kafkaConfig.GroupId = "group_" + topic[0] + "_analyzer"
     } else {
-        kafkaConfig.GroupId = "group_default_backupper"
+        kafkaConfig.GroupId = "group_default_analyzer"
     }
     return gkafka.NewClient(kafkaConfig)
 }
@@ -146,6 +155,8 @@ func handlerKafkaMessage(message *gkafka.Message, elasticClient *elastic.Client)
                 BodyString(string(data)).
                 Do(context.Background()); err != nil {
                 glog.Error(err)
+            } else {
+                glog.Debugfln("pushed to ES, index: %s, body: %s", index, string(data))
             }
         } else {
             glog.Error(err)

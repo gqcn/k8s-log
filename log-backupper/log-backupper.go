@@ -23,6 +23,7 @@ import (
     "strings"
     "os/exec"
     "os"
+    "gitee.com/johng/gf/g/util/gconv"
 )
 
 const (
@@ -31,13 +32,16 @@ const (
 )
 
 var (
+    debug     bool
     kafkaAddr string
     topicSet  = gset.NewStringSet()
 )
 
 func main() {
-    kafkaAddr = gcmd.Option.Get("KAFKA_ADDR")
+    debug     = gconv.Bool(gcmd.Option.Get("debug"))
+    kafkaAddr = gcmd.Option.Get("kafka-addr")
     if kafkaAddr == "" {
+        debug     = gconv.Bool(genv.Get("DEBUG"))
         kafkaAddr = genv.Get("KAFKA_ADDR")
     }
     if kafkaAddr == "" {
@@ -45,11 +49,16 @@ func main() {
     }
     go handlerArchiveLoop()
 
+    if debug {
+        glog.SetDebug(true)
+    }
+
     kafkaClient := newKafkaClient()
     for {
         if topics, err := kafkaClient.Topics(); err == nil {
             for _, topic := range topics {
                 if !topicSet.Contains(topic) {
+                    glog.Debugfln("add new topic handle: %s", topic)
                     topicSet.Add(topic)
                     go handlerKafkaTopic(topic)
                 }
@@ -79,6 +88,8 @@ func handlerArchiveLoop() {
                     cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path), "--remove-files")
                     if err := cmd.Run(); err != nil {
                         glog.Error(err)
+                    } else {
+                        glog.Debugfln("tar -jvcf %s %s --remove-files", archivePath, gfile.Basename(path))
                     }
                 }
             }
@@ -93,7 +104,7 @@ func handlerKafkaTopic(topic string) {
     kafkaClient := newKafkaClient(topic)
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
-            // 不使用异步，顺序写入
+            glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
             handlerKafkaMessage(msg)
         } else {
             glog.Error(err)
