@@ -137,10 +137,11 @@ func handlerKafkaMessage(message *gkafka.Message, elasticClient *elastic.Client)
             FilePath   : j.GetString("source"),
         }
         // 日志分类，格式规范：/var/log/medlinker/{AppName}/{Category}/YYYY-MM-DD.log
+        // 兼容已有旧日志格式：/var/log/medlinker/{AppName}/xxx/xxx/xxx/YYYY-MM-DD.log
         array := strings.Split(gfile.Dir(msg.FilePath), "/")
         if len(array) >= 6 {
             // 注意：array[0]为空
-            msg.Category = array[5]
+            msg.Category = strings.Join(array[5:], "/")
         }
         checkPatternWithMsg(msg)
         // 处理时间中的格式，转换为标准格式

@@ -13,4 +13,4 @@ gitpush.sh
 pkg/
 bin/
 cbuild
-test.php
+test.go
