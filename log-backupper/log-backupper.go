@@ -93,7 +93,9 @@ func handlerArchiveLoop() {
                     cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
                     glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
                     if err := cmd.Run(); err == nil {
-                        gfile.Remove(path)
+                        if err := gfile.Remove(path); err != nil {
+                            glog.Error(err)
+                        }
                     } else {
                         glog.Error(err)
                     }
