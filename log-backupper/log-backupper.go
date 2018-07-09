@@ -12,7 +12,6 @@ import (
     "gitee.com/johng/gf/g/os/gcmd"
     "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/os/glog"
-    "gitee.com/johng/gf/g/container/gset"
     "time"
     "gitee.com/johng/gf/g/encoding/gjson"
     "fmt"
@@ -24,11 +23,12 @@ import (
     "os/exec"
     "os"
     "gitee.com/johng/gf/g/util/gconv"
+    "gitee.com/johng/gf/g/container/gset"
 )
 
 const (
     TOPIC_AUTO_CHECK_INTERVAL   = 5      // (秒)kafka topic检测时间间隔
-    ARCHIVE_AUTO_CHECK_INTERVAL = 86400  // (秒)自动压缩归档检测时间间隔
+    ARCHIVE_AUTO_CHECK_INTERVAL = 3600   // (秒)自动压缩归档检测时间间隔
 )
 
 var (
@@ -38,8 +38,10 @@ var (
 )
 
 func main() {
+    // 通过启动参数传参
     debug     = gconv.Bool(gcmd.Option.Get("debug"))
     kafkaAddr = gcmd.Option.Get("kafka-addr")
+    // 通过环境变量传参
     if kafkaAddr == "" {
         debug     = gconv.Bool(genv.Get("DEBUG"))
         kafkaAddr = genv.Get("KAFKA_ADDR")
@@ -53,8 +55,8 @@ func main() {
         glog.SetDebug(true)
     }
 
-    kafkaClient := newKafkaClient()
     for {
+        kafkaClient := newKafkaClient()
         if topics, err := kafkaClient.Topics(); err == nil {
             for _, topic := range topics {
                 if !topicSet.Contains(topic) {
@@ -66,6 +68,7 @@ func main() {
         } else {
             glog.Error(err)
         }
+        kafkaClient.Close()
         time.Sleep(TOPIC_AUTO_CHECK_INTERVAL*time.Second)
     }
 }
@@ -81,15 +84,18 @@ func handlerArchiveLoop() {
                         glog.Errorfln("archive for %s already exists", path)
                         continue
                     }
+                    // 进入日志目录
                     if err := os.Chdir(gfile.Dir(path)); err != nil {
                         glog.Error(err)
                         continue
                     }
-                    cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path), "--remove-files")
-                    if err := cmd.Run(); err != nil {
-                        glog.Error(err)
+                    // 执行日志文件归档
+                    cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
+                    glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
+                    if err := cmd.Run(); err == nil {
+                        gfile.Remove(path)
                     } else {
-                        glog.Debugfln("tar -jvcf %s %s --remove-files", archivePath, gfile.Basename(path))
+                        glog.Error(err)
                     }
                 }
             }
@@ -98,14 +104,21 @@ func handlerArchiveLoop() {
     }
 }
 
-
 // 异步处理topic日志
 func handlerKafkaTopic(topic string) {
     kafkaClient := newKafkaClient(topic)
+    defer func() {
+        kafkaClient.Close()
+        topicSet.Remove(topic)
+    }()
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
             glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
-            handlerKafkaMessage(msg)
+            if err := handlerKafkaMessage(msg); err == nil {
+                msg.MarkOffset()
+            } else {
+                glog.Error(err)
+            }
         } else {
             glog.Error(err)
         }
@@ -114,8 +127,9 @@ func handlerKafkaTopic(topic string) {
 
 // 创建kafka客户端
 func newKafkaClient(topic ... string) *gkafka.Client {
-    kafkaConfig        := gkafka.NewConfig()
-    kafkaConfig.Servers = kafkaAddr
+    kafkaConfig               := gkafka.NewConfig()
+    kafkaConfig.Servers        = kafkaAddr
+    kafkaConfig.AutoMarkOffset = false
     if len(topic) > 0 {
         kafkaConfig.Topics  = topic[0]
         kafkaConfig.GroupId = "group_" + topic[0] + "_backupper"
@@ -126,20 +140,20 @@ func newKafkaClient(topic ... string) *gkafka.Client {
 }
 
 // 处理kafka消息
-func handlerKafkaMessage(message *gkafka.Message) {
-    if j, err := gjson.DecodeToJson(message.Value); err == nil {
-        j.SetViolenceCheck(false)
+func handlerKafkaMessage(kafkaMsg *gkafka.Message) error {
+    if j, err := gjson.DecodeToJson(kafkaMsg.Value); err == nil {
         content := j.GetString("message")
         msgTime := getTimeFromContent(content)
         if msgTime.IsZero() {
             msgTime = parserFileBeatTime(j.GetString("@timestamp"))
         }
         // 规范：/var/log/medlinker-backup/{AppName/Topic}/{YYYY-MM-DD}.log
-        path := fmt.Sprintf("/var/log/medlinker-backup/%s/%s.log", message.Topic, msgTime.Format("2006-01-02"))
+        path := fmt.Sprintf("/var/log/medlinker-backup/%s/%s.log", kafkaMsg.Topic, msgTime.Format("2006-01-02"))
         if err := gfile.PutContentsAppend(path, content + "\n"); err != nil {
-            glog.Error(err)
+            return err
         }
     }
+    return nil
 }
 
 // 从内容中解析出日志的时间，并返回对应的日期对象

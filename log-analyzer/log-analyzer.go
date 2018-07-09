@@ -38,6 +38,7 @@ const (
 )
 
 var (
+    // 默认通过启动参数传参
     esUrl      = gcmd.Option.Get("es-url")
     esAuthUser = gcmd.Option.Get("es-auth-user")
     esAuthPass = gcmd.Option.Get("es-auth-pass")
@@ -48,6 +49,7 @@ var (
 )
 
 func main() {
+    // 如果启动参数没有传递，那么通过环境变量传参
     if esUrl == "" {
         debug      = gconv.Bool(genv.Get("DEBUG"))
         esUrl      = genv.Get("ES_URL")
@@ -66,8 +68,8 @@ func main() {
         glog.SetDebug(true)
     }
 
-    kafkaClient := newKafkaClient()
     for {
+        kafkaClient := newKafkaClient()
         if topics, err := kafkaClient.Topics(); err == nil {
             for _, topic := range topics {
                 if !topicSet.Contains(topic) {
@@ -79,6 +81,7 @@ func main() {
         } else {
             glog.Error(err)
         }
+        kafkaClient.Close()
         time.Sleep(TOPIC_AUTO_CHECK_INTERVAL*time.Second)
     }
 }
@@ -87,6 +90,11 @@ func main() {
 func handlerKafkaTopic(topic string) {
     kafkaClient   := newKafkaClient(topic)
     elasticClient := newElasticClient()
+    defer func() {
+        // elastic客户端不需要关闭，本身是短链接
+        kafkaClient.Close()
+        topicSet.Remove(topic)
+    }()
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
             glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
@@ -99,8 +107,9 @@ func handlerKafkaTopic(topic string) {
 
 // 创建kafka客户端
 func newKafkaClient(topic ... string) *gkafka.Client {
-    kafkaConfig        := gkafka.NewConfig()
-    kafkaConfig.Servers = kafkaAddr
+    kafkaConfig               := gkafka.NewConfig()
+    kafkaConfig.Servers        = kafkaAddr
+    kafkaConfig.AutoMarkOffset = false
     if len(topic) > 0 {
         kafkaConfig.Topics  = topic[0]
         kafkaConfig.GroupId = "group_" + topic[0] + "_analyzer"
@@ -126,9 +135,8 @@ func newElasticClient() *elastic.Client {
 }
 
 // 处理kafka消息
-func handlerKafkaMessage(message *gkafka.Message, elasticClient *elastic.Client) {
-    if j, err := gjson.DecodeToJson(message.Value); err == nil {
-        j.SetViolenceCheck(false)
+func handlerKafkaMessage(kafkaMsg *gkafka.Message, elasticClient *elastic.Client) {
+    if j, err := gjson.DecodeToJson(kafkaMsg.Value); err == nil {
         msg := &Message {
             Time       : parserFileBeatTime(j.GetString("@timestamp")),
             Content    : j.GetString("message"),
@@ -150,13 +158,14 @@ func handlerKafkaMessage(message *gkafka.Message, elasticClient *elastic.Client)
         }
         // 向ElasticSearch发送解析后的数据
         if data, err := gjson.Encode(msg); err == nil {
-            index :=  "log-" + message.Topic
+            index :=  "log-" + kafkaMsg.Topic
             if _, err := elasticClient.Index().
                 Index(index).Type(index).
                 BodyString(string(data)).
                 Do(context.Background()); err != nil {
                 glog.Error(err)
             } else {
+                kafkaMsg.MarkOffset()
                 glog.Debugfln("pushed to ES, index: %s, body: %s", index, string(data))
             }
         } else {
