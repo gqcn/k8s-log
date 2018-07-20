@@ -13,7 +13,7 @@ import (
     "gitee.com/johng/gf/g/os/gcmd"
     "github.com/olivere/elastic"
     "gitee.com/johng/gf/g/os/glog"
-    "gitee.com/johng/gf/g/util/gregx"
+    "gitee.com/johng/gf/g/util/gregex"
     "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/os/gfile"
@@ -45,7 +45,6 @@ var (
     kafkaAddr  = gcmd.Option.Get("kafka-addr")
     debug      = gconv.Bool(gcmd.Option.Get("debug"))
     topicSet   = gset.NewStringSet()
-
 )
 
 func main() {
@@ -180,42 +179,42 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message, elasticClient *elastic.Client
 // 为便于前期兼容旧的日志格式，该方法中存在多种自定义的日志内容匹配规则，后期慢慢规范化之后只会存在一种规则。
 func checkPatternWithMsg(msg *Message) {
     // 标准规范格式：2018-08-08 13:01:55 DEBUG xxx
-    if match, _ := gregx.MatchString(`^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s+([\w\.]+)\s+([\w\W]+)`, msg.Content); len(match) >= 4 {
+    if match, _ := gregex.MatchString(`^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s+([\w\.]+)\s+([\w\W]+)`, msg.Content); len(match) >= 4 {
         msg.Time    = match[1]
         msg.Level   = match[2]
         msg.Content = match[3]
         return
     }
     // med3-srv-error.log: [INFO] 2018-06-20 14:09:20 xxx
-    if match, _ := gregx.MatchString(`^\[([\w\.]+)\]\s+(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s+([\w\W]+)`, msg.Content); len(match) >= 4 {
+    if match, _ := gregex.MatchString(`^\[([\w\.]+)\]\s+(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s+([\w\W]+)`, msg.Content); len(match) >= 4 {
         msg.Time    = match[2]
         msg.Level   = match[1]
         msg.Content = match[3]
         return
     }
     // med-search.log: [2018-05-24 16:10:20] product.ERROR: xxx
-    if match, _ := gregx.MatchString(`^\[([\d\-\:\s]+?)\]\s+([\w\.]+):\s+([\w\W]+)`, msg.Content); len(match) >= 4 {
+    if match, _ := gregex.MatchString(`^\[([\d\-\:\s]+?)\]\s+([\w\.]+):\s+([\w\W]+)`, msg.Content); len(match) >= 4 {
         msg.Time    = match[1]
         msg.Level   = match[2]
         msg.Content = match[3]
         return
     }
     // quiz-go.log: time="2018-06-20T14:13:11+08:00" level=info msg="xxx"
-    if match, _ := gregx.MatchString(`^time="(.+?)"\s+level=(.+?)\s+msg="([\w\W]+?)"`, msg.Content); len(match) >= 4 {
+    if match, _ := gregex.MatchString(`^time="(.+?)"\s+level=(.+?)\s+msg="([\w\W]+?)"`, msg.Content); len(match) >= 4 {
         msg.Time    = match[1]
         msg.Level   = match[2]
         msg.Content = match[3]
         return
     }
     // yilian-shop-crm.log: [2018-06-20 14:10:14]  [2.85ms] xxx
-    if match, _ := gregx.MatchString(`^\[([\d\-\:\s]+)\]\s+([\w\W]+)`, msg.Content); len(match) >= 3 {
+    if match, _ := gregex.MatchString(`^\[([\d\-\:\s]+)\]\s+([\w\W]+)`, msg.Content); len(match) >= 3 {
         msg.Time    = match[1]
         msg.Content = match[2]
         return
     }
     // 什么都没匹配，那么只匹配其中的日期出来，其他不做处理
     // nginx.log: 10.26.113.161 - - [2018-06-20T10:59:59+08:00] "POST xxx"
-    if match, _ := gregx.MatchString(`\[([TZ\d\-\:\s\+]+?)\]\s+([\w\W]+)`, msg.Content); len(match) >= 2 {
+    if match, _ := gregex.MatchString(`\[([TZ\d\-\:\s\+]+?)\]\s+([\w\W]+)`, msg.Content); len(match) >= 2 {
         msg.Time    = match[1]
         return
     }

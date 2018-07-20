@@ -14,8 +14,6 @@ import (
     "gitee.com/johng/gf/g/os/glog"
     "time"
     "gitee.com/johng/gf/g/encoding/gjson"
-    "fmt"
-    "gitee.com/johng/gf/g/util/gregx"
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/genv"
@@ -24,6 +22,7 @@ import (
     "os"
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/container/gset"
+    "gitee.com/johng/gf/g/util/gregex"
 )
 
 const (
@@ -75,33 +74,45 @@ func main() {
 
 // 自动归档检查循环，归档使用tar工具实现
 func handlerArchiveLoop() {
+    patterns := make([]string, 0)
+    prefix   := "/var/log/medlinker"
+    for i := 1; i <= 6; i++ {
+        patterns = append(patterns, prefix + strings.Repeat("/*", i) + "/*.log")
+    }
     for {
-        if array , err := gfile.Glob("/var/log/medlinker-backup/*/*.log"); err == nil && len(array) > 0 {
-            for _, path := range array {
-                if !strings.EqualFold(gfile.Basename(path), gtime.Format("2006-01-02.log")) {
-                    archivePath := path + ".tar.bz2"
-                    if gfile.Exists(archivePath) {
-                        glog.Errorfln("archive for %s already exists", path)
-                        continue
-                    }
-                    // 进入日志目录
-                    if err := os.Chdir(gfile.Dir(path)); err != nil {
+        paths := make([]string, 0)
+        for _, pattern := range patterns {
+            if array , _ := gfile.Glob(pattern); len(array) > 0 {
+                paths = append(paths, array...)
+            }
+        }
+        for _, path := range paths {
+            // 日志文件超过一天没有修改操作，那么执行归档
+            // 需要注意的是，这里会引起昨天的日志文件保留一天后才会被归档；而不是当天一过便归档，预留1天左右的缓冲时间
+            if gtime.Second() - gfile.MTime(path) >= 86400 {
+                archivePath := path + ".tar.bz2"
+                if gfile.Exists(archivePath) {
+                    glog.Errorfln("archive for %s already exists", path)
+                    continue
+                }
+                // 进入日志目录
+                if err := os.Chdir(gfile.Dir(path)); err != nil {
+                    glog.Error(err)
+                    continue
+                }
+                // 执行日志文件归档
+                cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
+                glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
+                if err := cmd.Run(); err == nil {
+                    if err := gfile.Remove(path); err != nil {
                         glog.Error(err)
-                        continue
                     }
-                    // 执行日志文件归档
-                    cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
-                    glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
-                    if err := cmd.Run(); err == nil {
-                        if err := gfile.Remove(path); err != nil {
-                            glog.Error(err)
-                        }
-                    } else {
-                        glog.Error(err)
-                    }
+                } else {
+                    glog.Error(err)
                 }
             }
         }
+
         time.Sleep(ARCHIVE_AUTO_CHECK_INTERVAL*time.Second)
     }
 }
@@ -149,8 +160,7 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) error {
         if msgTime.IsZero() {
             msgTime = parserFileBeatTime(j.GetString("@timestamp"))
         }
-        // 规范：/var/log/medlinker-backup/{AppName/Topic}/{YYYY-MM-DD}.log
-        path := fmt.Sprintf("/var/log/medlinker-backup/%s/%s.log", kafkaMsg.Topic, msgTime.Format("2006-01-02"))
+        path := j.GetString("source")
         if err := gfile.PutContentsAppend(path, content + "\n"); err != nil {
             return err
         }
@@ -160,7 +170,7 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) error {
 
 // 从内容中解析出日志的时间，并返回对应的日期对象
 func getTimeFromContent(content string) time.Time {
-    match, _ := gregx.MatchString(gtime.TIME_REAGEX_PATTERN, content)
+    match, _ := gregex.MatchString(gtime.TIME_REAGEX_PATTERN, content)
     if len(match) >= 1 {
         if t, err := gtime.StrToTime(match[0]); err == nil {
             return t
