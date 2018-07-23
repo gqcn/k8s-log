@@ -13,9 +13,8 @@ import (
     "gitee.com/johng/gf/g/os/genv"
     "strings"
     "gitee.com/johng/gf/g/util/gconv"
-    "github.com/olivere/elastic"
-    "context"
     "fmt"
+    "gitee.com/johng/gf/g/net/ghttp"
 )
 
 const (
@@ -29,6 +28,7 @@ var (
     esAuthPass = gcmd.Option.Get("es-auth-pass")
     debug      = gconv.Bool(gcmd.Option.Get("debug"))
     expire     = gconv.Int(gcmd.Option.Get("expire"))
+
 )
 
 func main() {
@@ -54,16 +54,26 @@ func main() {
 
     for {
         go cleanExpiredBackupFiles()
-        go func() {
-            esclient := newElasticClient()
-            latest   := gtime.Now().Add(time.Duration(-expire*86400)).String()
-            query    := fmt.Sprintf(`"range" : { "Time.keyword" : { "lte" : "%s" } }`, latest)
-            if _, err := esclient.DeleteByQuery().QueryString(query).Do(context.Background()); err != nil {
-                glog.Error(err)
-            }
-        }()
+        go cleanExpiredElasticData()
         time.Sleep(AUTO_CHECK_INTERVAL*time.Second)
     }
+}
+
+// 清除ElasticSearch中的过期数据
+func cleanExpiredElasticData() {
+    latest     := gtime.Now().Add(time.Duration(-expire*86400)).String()
+    params     := fmt.Sprintf(`{"query":{"range":{"Time.keyword":{"lte":"%s"}}}}`, latest)
+    httpClient := ghttp.NewClient()
+    if len(esAuthUser) > 0 {
+        httpClient.SetBasicAuth(esAuthUser, esAuthPass)
+    }
+    httpClient.SetHeader("Content-Type", "application/json")
+    response, err := httpClient.Post(strings.TrimRight(esUrl, "/") + "/_all/_delete_by_query", params)
+    if err != nil {
+        glog.Error(err)
+    }
+    glog.Debug(string(response.ReadAll()))
+    response.Close()
 }
 
 // 清除过期的备份日志文件
@@ -90,19 +100,4 @@ func cleanExpiredBackupFiles() {
             }
         }
     }
-}
-
-// 创建ElasticSearch客户端
-func newElasticClient() *elastic.Client {
-    esOptions := make([]elastic.ClientOptionFunc, 0)
-    esOptions  = append(esOptions, elastic.SetURL(esUrl))
-    if esAuthUser != "" {
-        esOptions = append(esOptions, elastic.SetBasicAuth(esAuthUser, esAuthPass))
-    }
-    if client, err := elastic.NewClient(esOptions...); err == nil {
-        return client
-    } else {
-        glog.Error(err)
-    }
-    return nil
 }
