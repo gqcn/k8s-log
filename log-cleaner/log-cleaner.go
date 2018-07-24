@@ -61,7 +61,7 @@ func main() {
 
 // 清除ElasticSearch中的过期数据
 func cleanExpiredElasticData() {
-    latest     := gtime.Now().Add(time.Duration(-expire*86400)).String()
+    latest     := gtime.Now().Add(time.Duration(-expire)*24*time.Hour).String()
     params     := fmt.Sprintf(`{"query":{"range":{"Time.keyword":{"lte":"%s"}}}}`, latest)
     httpClient := ghttp.NewClient()
     if len(esAuthUser) > 0 {
