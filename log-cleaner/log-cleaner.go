@@ -48,9 +48,7 @@ func main() {
         expire = 100
     }
 
-    if debug {
-        glog.SetDebug(true)
-    }
+    glog.SetDebug(debug)
 
     for {
         go cleanExpiredBackupFiles()

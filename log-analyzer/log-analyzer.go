@@ -63,9 +63,7 @@ func main() {
         panic("Incomplete Kafka setting")
     }
 
-    if debug {
-        glog.SetDebug(true)
-    }
+    glog.SetDebug(debug)
 
     for {
         kafkaClient := newKafkaClient()

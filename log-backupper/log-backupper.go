@@ -50,9 +50,7 @@ func main() {
     }
     go handlerArchiveLoop()
 
-    if debug {
-        glog.SetDebug(true)
-    }
+    glog.SetDebug(debug)
 
     for {
         kafkaClient := newKafkaClient()
@@ -89,7 +87,10 @@ func handlerArchiveLoop() {
         for _, path := range paths {
             // 日志文件超过一天没有修改操作，那么执行归档
             // 需要注意的是，这里会引起昨天的日志文件保留一天后才会被归档；而不是当天一过便归档，预留1天左右的缓冲时间
-            if gtime.Second() - gfile.MTime(path) >= 86400 {
+            ctime := gtime.Second()
+            mtime := gfile.MTime(path)
+            glog.Debugfln("check %s: %d - %d = %d", path, ctime, mtime, ctime - mtime)
+            if ctime - mtime >= 86400 {
                 archivePath := path + ".tar.bz2"
                 if gfile.Exists(archivePath) {
                     glog.Errorfln("archive for %s already exists", path)
@@ -126,7 +127,7 @@ func handlerKafkaTopic(topic string) {
     }()
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
-            glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
+            //glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
             if err := handlerKafkaMessage(msg); err == nil {
                 msg.MarkOffset()
             } else {
