@@ -21,6 +21,7 @@ import (
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/util/gconv"
+    "sync"
 )
 
 type Message struct {
@@ -34,7 +35,8 @@ type Message struct {
 }
 
 const (
-    TOPIC_AUTO_CHECK_INTERVAL   = 5 // (秒)kafka topic检测时间间隔
+    TOPIC_AUTO_CHECK_INTERVAL   = 5  // (秒)kafka topic检测时间间隔
+    DEFAULT_ES_BULK_SIZE        = 10 // 没有设置bulk-size时ES并发批量写数据数量(由于ES写数据比较慢，避免es队列满的情况报429错误)
 )
 
 var (
@@ -42,6 +44,7 @@ var (
     esUrl      = gcmd.Option.Get("es-url")
     esAuthUser = gcmd.Option.Get("es-auth-user")
     esAuthPass = gcmd.Option.Get("es-auth-pass")
+    esBulkSize = gconv.Int(gcmd.Option.Get("es-bulk-size"))
     kafkaAddr  = gcmd.Option.Get("kafka-addr")
     debug      = gconv.Bool(gcmd.Option.Get("debug"))
     topicSet   = gset.NewStringSet()
@@ -54,6 +57,7 @@ func main() {
         esUrl      = genv.Get("ES_URL")
         esAuthUser = genv.Get("ES_AUTH_USER")
         esAuthPass = genv.Get("ES_AUTH_PASS")
+        esBulkSize = gconv.Int(genv.Get("ES_BULK_SIZE"))
         kafkaAddr  = genv.Get("KAFKA_ADDR")
     }
     if esUrl == "" {
@@ -61,6 +65,10 @@ func main() {
     }
     if kafkaAddr == "" {
         panic("Incomplete Kafka setting")
+    }
+
+    if esBulkSize == 0 {
+        esBulkSize = DEFAULT_ES_BULK_SIZE
     }
 
     glog.SetDebug(debug)
@@ -92,13 +100,24 @@ func handlerKafkaTopic(topic string) {
         kafkaClient.Close()
         topicSet.Remove(topic)
     }()
+
+    // 分批往ES写数据，防止429错误
+    wg := &sync.WaitGroup{}
     for {
-        if msg, err := kafkaClient.Receive(); err == nil {
-            glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
-            go handlerKafkaMessage(msg, elasticClient)
-        } else {
-            glog.Error(err)
+        // 分批写，数据量大的时候最多esBulkSize条数据同时请求
+        for i := 0; i < esBulkSize; i++ {
+            if msg, err := kafkaClient.Receive(); err == nil {
+                glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
+                wg.Add(1)
+                go func() {
+                    handlerKafkaMessage(msg, elasticClient)
+                    wg.Done()
+                }()
+            } else {
+                glog.Error(err)
+            }
         }
+        wg.Wait()
     }
 }
 
