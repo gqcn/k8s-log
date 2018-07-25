@@ -21,7 +21,6 @@ import (
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/util/gconv"
-    "sync"
 )
 
 type Message struct {
@@ -48,6 +47,7 @@ var (
     kafkaAddr  = gcmd.Option.Get("kafka-addr")
     debug      = gconv.Bool(gcmd.Option.Get("debug"))
     topicSet   = gset.NewStringSet()
+    esTaskQueue chan struct{}
 )
 
 func main() {
@@ -72,6 +72,9 @@ func main() {
     }
 
     glog.SetDebug(debug)
+
+    // 用于控制往ES的写入速度(最大并发数)
+    esTaskQueue = make(chan struct{}, esBulkSize)
 
     for {
         kafkaClient := newKafkaClient()
@@ -101,23 +104,17 @@ func handlerKafkaTopic(topic string) {
         topicSet.Remove(topic)
     }()
 
-    // 分批往ES写数据，防止429错误
-    wg := &sync.WaitGroup{}
     for {
-        // 分批写，数据量大的时候最多esBulkSize条数据同时请求
-        for i := 0; i < esBulkSize; i++ {
-            if msg, err := kafkaClient.Receive(); err == nil {
-                glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
-                wg.Add(1)
-                go func() {
-                    handlerKafkaMessage(msg, elasticClient)
-                    wg.Done()
-                }()
-            } else {
-                glog.Error(err)
-            }
+        if msg, err := kafkaClient.Receive(); err == nil {
+            glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
+            esTaskQueue <- struct{}{}
+            go func() {
+                handlerKafkaMessage(msg, elasticClient)
+                <- esTaskQueue
+            }()
+        } else {
+            glog.Error(err)
         }
-        wg.Wait()
     }
 }
 
