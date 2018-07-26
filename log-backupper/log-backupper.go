@@ -23,6 +23,7 @@ import (
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/util/gregex"
+    "gitee.com/johng/gf/g/container/gmap"
 )
 
 const (
@@ -33,7 +34,8 @@ const (
 var (
     debug     bool
     kafkaAddr string
-    topicSet  = gset.NewStringSet()
+    topicSet   = gset.NewStringSet()
+    pathQueues = gmap.NewStringInterfaceMap()
 )
 
 func main() {
@@ -128,11 +130,7 @@ func handlerKafkaTopic(topic string) {
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
             //glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
-            if err := handlerKafkaMessage(msg); err == nil {
-                msg.MarkOffset()
-            } else {
-                glog.Error(err)
-            }
+            go handlerKafkaMessage(msg)
         } else {
             glog.Error(err)
         }
@@ -154,7 +152,12 @@ func newKafkaClient(topic ... string) *gkafka.Client {
 }
 
 // 处理kafka消息
-func handlerKafkaMessage(kafkaMsg *gkafka.Message) error {
+func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
+    defer func() {
+        if err == nil {
+            kafkaMsg.MarkOffset()
+        }
+    }()
     if j, err := gjson.DecodeToJson(kafkaMsg.Value); err == nil {
         content := j.GetString("message")
         msgTime := getTimeFromContent(content)
