@@ -97,12 +97,10 @@ func handlerArchiveLoop() {
             }
         }
         for _, path := range paths {
-            // 日志文件超过一天没有修改操作，那么执行归档
-            // 需要注意的是，这里会引起昨天的日志文件保留一天后才会被归档；而不是当天一过便归档，预留1天左右的缓冲时间
+            // 日志文件过天，并且超过1个小时没有任何操作，那么执行归档
             ctime := gtime.Second()
             mtime := gfile.MTime(path)
-            glog.Debugfln("check %s: %d - %d = %d", path, ctime, mtime, ctime - mtime)
-            if ctime - mtime >= 86400 {
+            if ctime - mtime > 3600 && gtime.NewFromTimeStamp(ctime).Format("Y-m-d") != gtime.NewFromTimeStamp(mtime).Format("Y-m-d") {
                 archivePath := path + ".tar.bz2"
                 if gfile.Exists(archivePath) {
                     glog.Errorfln("archive for %s already exists", path)
