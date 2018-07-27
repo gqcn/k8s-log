@@ -29,13 +29,16 @@ import (
 const (
     TOPIC_AUTO_CHECK_INTERVAL   = 5      // (秒)kafka topic检测时间间隔
     ARCHIVE_AUTO_CHECK_INTERVAL = 3600   // (秒)自动压缩归档检测时间间隔
+    KAFKA_MSG_HANDLER_NUM       = 100    // 并发的kafka消息消费goroutine数量
 )
 
 var (
     debug     bool
     kafkaAddr string
-    topicSet   = gset.NewStringSet()
-    pathQueues = gmap.NewStringInterfaceMap()
+    topicSet    = gset.NewStringSet()
+    pathQueues  = gmap.NewStringInterfaceMap()
+    handlerSize = gconv.Int(gcmd.Option.Get("handler-size"))
+    handlerChan  chan struct{}
 )
 
 func main() {
@@ -44,15 +47,22 @@ func main() {
     kafkaAddr = gcmd.Option.Get("kafka-addr")
     // 通过环境变量传参
     if kafkaAddr == "" {
-        debug     = gconv.Bool(genv.Get("DEBUG"))
-        kafkaAddr = genv.Get("KAFKA_ADDR")
+        debug       = gconv.Bool(genv.Get("DEBUG"))
+        kafkaAddr   = genv.Get("KAFKA_ADDR")
+        handlerSize = gconv.Int(genv.Get("HANDLER_SIZE"))
     }
     if kafkaAddr == "" {
         panic("Incomplete Kafka setting")
     }
-    go handlerArchiveLoop()
+    if handlerSize == 0 {
+        handlerSize = KAFKA_MSG_HANDLER_NUM
+    }
+    // 用于限制kafka消费异步gorutine数量
+    handlerChan = make(chan struct{}, handlerSize)
 
     glog.SetDebug(debug)
+
+    go handlerArchiveLoop()
 
     for {
         kafkaClient := newKafkaClient()
@@ -130,7 +140,11 @@ func handlerKafkaTopic(topic string) {
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
             //glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
-            go handlerKafkaMessage(msg)
+            handlerChan <- struct{}{}
+            go func() {
+                handlerKafkaMessage(msg)
+                <- handlerChan
+            }()
         } else {
             glog.Error(err)
         }
