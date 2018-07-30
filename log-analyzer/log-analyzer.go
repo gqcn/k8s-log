@@ -115,9 +115,9 @@ func main() {
     // 异步ES数据队列处理及批量发送处理循环
     go autoSendToESByBulkOrTimerLoop()
 
+    kafkaClient := newKafkaClient()
+    defer kafkaClient.Close()
     for {
-        // topic监听循环
-        kafkaClient := newKafkaClient()
         if topics, err := kafkaClient.Topics(); err == nil {
             for _, topic := range topics {
                 if !topicSet.Contains(topic) {
@@ -128,8 +128,8 @@ func main() {
             }
         } else {
             glog.Error(err)
+            break
         }
-        kafkaClient.Close()
         time.Sleep(TOPIC_AUTO_CHECK_INTERVAL*time.Second)
     }
 }
