@@ -98,13 +98,14 @@ func handlerArchiveLoop() {
             }
         }
         for _, path := range paths {
-            // 日志文件过天，并且超过1个小时没有任何操作，那么执行归档
+            // 日志文件过天，并且超过3个小时没有任何操作，那么执行归档
             ctime := gtime.Second()
             mtime := gfile.MTime(path)
-            if ctime - mtime > 3600 && gtime.NewFromTimeStamp(ctime).Format("Y-m-d") != gtime.NewFromTimeStamp(mtime).Format("Y-m-d") {
+            if ctime - mtime > 3*3600 && gtime.NewFromTimeStamp(ctime).Format("Y-m-d") != gtime.NewFromTimeStamp(mtime).Format("Y-m-d") {
                 archivePath := path + ".tar.bz2"
                 if gfile.Exists(archivePath) {
-                    glog.Errorfln("archive for %s already exists", path)
+                    glog.Debugfln("archive for %s already exists, remove it", path)
+                    gfile.Remove(path)
                     continue
                 }
                 // 进入日志目录
