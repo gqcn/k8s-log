@@ -21,6 +21,7 @@ import (
     "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/util/gconv"
     "context"
+    "fmt"
 )
 
 // ES数据结构
@@ -44,10 +45,11 @@ type SendItem struct {
 }
 
 const (
-    TOPIC_AUTO_CHECK_INTERVAL   = 5     // (秒)kafka topic检测时间间隔
-    DEFAULT_ES_BULK_SIZE        = 1000  // 往ES一次批量发送数据大小(注意大小不要超过15MB)
-    DEFAULT_ES_QUEUE_SIZE       = 50    // 没有设置bulk-size时ES并发批量写数据数量(由于ES写数据比较慢，避免es队列满的情况报429错误)
-    KAFKA_MSG_HANDLER_NUM       = 10    // 并发的kafka消息消费goroutine数量
+    VERSION                     = "20180807.5" // 版本号
+    TOPIC_AUTO_CHECK_INTERVAL   = 5            // (秒)kafka topic检测时间间隔
+    DEFAULT_ES_BULK_SIZE        = 1000         // 往ES一次批量发送数据大小(注意大小不要超过15MB)
+    DEFAULT_ES_QUEUE_SIZE       = 50           // 没有设置bulk-size时ES并发批量写数据数量(由于ES写数据比较慢，避免es队列满的情况报429错误)
+    KAFKA_MSG_HANDLER_NUM       = 10           // 并发的kafka消息消费goroutine数量
 )
 
 var (
@@ -72,6 +74,8 @@ var (
 )
 
 func main() {
+    glog.Println("Version:", VERSION)
+    //gtime.SetTimeZone("CST")
     // 如果启动参数没有传递，那么通过环境变量传参
     if esUrl == "" {
         debug       = gconv.Bool(genv.Get("DEBUG"))
@@ -147,8 +151,8 @@ func handlerKafkaTopic(topic string) {
             //glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
             kafkaMsgChan <- struct{}{}
             go func() {
-               handlerKafkaMessage(msg)
-               <- kafkaMsgChan
+                handlerKafkaMessage(msg)
+                <- kafkaMsgChan
             }()
         } else {
             glog.Error(err)
@@ -204,12 +208,12 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) {
         }
         checkPatternWithMsg(msg)
         // 处理时间中的格式，转换为标准格式
-        if t, err := gtime.StrToTime(msg.Time); err == nil {
-            msg.Time =t.Format("2006-01-02 15:04:05")
+        if t := gtime.NewFromStr(msg.Time); t.IsZero() {
+            msg.Time = gtime.Now().Format("Y-m-d H:i:s")
         }
         // 向ElasticSearch发送解析后的数据
         if data, err := gjson.Encode(msg); err == nil {
-            index :=  "log-" + kafkaMsg.Topic
+            index := fmt.Sprintf("log-%s-%s", kafkaMsg.Topic, gtime.NewFromStr(msg.Time).Format("Ymd"))
             esSendQueue <- &SendItem {
                 Id      : gconv.String(gtime.Nanosecond()),
                 Index   : index,
@@ -242,7 +246,7 @@ func autoSendToESByBulkOrTimerLoop() {
                         goto ToSendBulk
                     }
 
-                // 正常队列
+                    // 正常队列
                 case item := <- esSendQueue:
                     bulkRequest            = bulkRequest.Add(elastic.NewBulkIndexRequest().Index(item.Index).Type(item.Type).Id(item.Id).Doc(item.Content))
                     bulkSendItems[item.Id] = item
@@ -255,21 +259,22 @@ func autoSendToESByBulkOrTimerLoop() {
             }
         }
 
-ToSendBulk:
+    ToSendBulk:
         if bulkRequest.NumberOfActions() > 0 {
             esTaskQueue <- struct{}{}
             // 异步往ES发送bulk批量数据写入请求，使用esTaskQueue控制并发数量
             go func(req *elastic.BulkService) {
                 //glog.Debug("time to send bulk:", req.NumberOfActions())
                 t1 := gtime.Millisecond()
-                bulkResponse, _ := req.Do(context.Background())
+                bulkResponse, err := req.Do(context.Background())
                 if bulkResponse == nil {
                     return
                 }
-                glog.Debugfln("bulk send cost: %d ms, success: %d, failed: %d",
+                glog.Debugfln("bulk send cost: %d ms, success: %d, failed: %d, error: %v",
                     gtime.Millisecond() - t1,
                     len(bulkResponse.Succeeded()),
-                    len(bulkResponse.Failed()))
+                    len(bulkResponse.Failed()),
+                    err)
 
                 // 成功项，标记offset
                 for _, v := range bulkResponse.Succeeded() {
