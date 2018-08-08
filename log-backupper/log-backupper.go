@@ -24,6 +24,7 @@ import (
     "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/util/gregex"
     "gitee.com/johng/gf/g/container/gmap"
+    "fmt"
 )
 
 const (
@@ -103,11 +104,12 @@ func handlerArchiveLoop() {
             mtime := gfile.MTime(path)
             if ctime - mtime > 3*3600 && gtime.NewFromTimeStamp(ctime).Format("Y-m-d") != gtime.NewFromTimeStamp(mtime).Format("Y-m-d") {
                 archivePath := path + ".tar.bz2"
-                if gfile.Exists(archivePath) {
-                    glog.Debugfln("archive for %s already exists, remove it", path)
-                    gfile.Remove(path)
-                    continue
+                existIndex  := 1
+                for gfile.Exists(archivePath) {
+                    archivePath = fmt.Sprintf("%s.%d.tar.bz2", path, existIndex)
+                    existIndex++
                 }
+
                 // 进入日志目录
                 if err := os.Chdir(gfile.Dir(path)); err != nil {
                     glog.Error(err)
