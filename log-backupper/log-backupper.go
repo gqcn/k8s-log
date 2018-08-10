@@ -99,10 +99,10 @@ func handlerArchiveLoop() {
             }
         }
         for _, path := range paths {
-            // 日志文件过天，并且超过3个小时没有任何操作，那么执行归档
+            // 日志文件超过30天，那么执行归档
             ctime := gtime.Second()
             mtime := gfile.MTime(path)
-            if ctime - mtime > 3*3600 && gtime.NewFromTimeStamp(ctime).Format("Y-m-d") != gtime.NewFromTimeStamp(mtime).Format("Y-m-d") {
+            if ctime - mtime > 30*86400 {
                 archivePath := path + ".tar.bz2"
                 existIndex  := 1
                 for gfile.Exists(archivePath) {
