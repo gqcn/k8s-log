@@ -17,7 +17,6 @@ import (
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/genv"
-    "strings"
     "os/exec"
     "os"
     "gitee.com/johng/gf/g/util/gconv"
@@ -28,9 +27,10 @@ import (
 )
 
 const (
-    TOPIC_AUTO_CHECK_INTERVAL   = 5      // (秒)kafka topic检测时间间隔
-    ARCHIVE_AUTO_CHECK_INTERVAL = 3600   // (秒)自动压缩归档检测时间间隔
-    KAFKA_MSG_HANDLER_NUM       = 100    // 并发的kafka消息消费goroutine数量
+    LOG_PATH                    = "/var/log/medlinker" // 日志目录
+    TOPIC_AUTO_CHECK_INTERVAL   = 5                    // (秒)kafka topic检测时间间隔
+    ARCHIVE_AUTO_CHECK_INTERVAL = 3600                 // (秒)自动压缩归档检测时间间隔
+    KAFKA_MSG_HANDLER_NUM       = 100                  // 并发的kafka消息消费goroutine数量
 )
 
 var (
@@ -86,18 +86,8 @@ func main() {
 
 // 自动归档检查循环，归档使用tar工具实现
 func handlerArchiveLoop() {
-    patterns := make([]string, 0)
-    prefix   := "/var/log/medlinker"
-    for i := 1; i <= 6; i++ {
-        patterns = append(patterns, prefix + strings.Repeat("/*", i) + "/*.log")
-    }
     for {
-        paths := make([]string, 0)
-        for _, pattern := range patterns {
-            if array , _ := gfile.Glob(pattern); len(array) > 0 {
-                paths = append(paths, array...)
-            }
-        }
+        paths, _ := gfile.ScanDir(LOG_PATH, "*.log", true)
         for _, path := range paths {
             // 日志文件超过30天，那么执行归档
             ctime := gtime.Second()
@@ -149,6 +139,9 @@ func handlerKafkaTopic(topic string) {
             }()
         } else {
             glog.Error(err)
+            // 如果发生错误，那么退出，
+            // 下一次会重新建立连接
+            break
         }
     }
 }

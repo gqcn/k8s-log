@@ -52,7 +52,7 @@ func main() {
 
     for {
         go cleanExpiredBackupFiles()
-        go cleanExpiredElasticData()
+        //go cleanExpiredElasticData()
         time.Sleep(AUTO_CHECK_INTERVAL*time.Second)
     }
 }
