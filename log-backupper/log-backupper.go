@@ -24,6 +24,7 @@ import (
     "gitee.com/johng/gf/g/util/gregex"
     "gitee.com/johng/gf/g/container/gmap"
     "fmt"
+    "bytes"
 )
 
 const (
@@ -31,6 +32,7 @@ const (
     TOPIC_AUTO_CHECK_INTERVAL   = 5                    // (秒)kafka topic检测时间间隔
     ARCHIVE_AUTO_CHECK_INTERVAL = 3600                 // (秒)自动压缩归档检测时间间隔
     KAFKA_MSG_HANDLER_NUM       = 100                  // 并发的kafka消息消费goroutine数量
+    KAFKA_MSG_SAVE_INTERVAL     = 5                    // (秒) kafka消息内容批量保存间隔
 )
 
 var (
@@ -39,6 +41,7 @@ var (
     topicSet    = gset.NewStringSet()
     pathQueues  = gmap.NewStringInterfaceMap()
     handlerSize = gconv.Int(gcmd.Option.Get("handler-size"))
+    bufferMap   = gmap.NewStringInterfaceMap()
     handlerChan  chan struct{}
 )
 
@@ -64,6 +67,7 @@ func main() {
     glog.SetDebug(debug)
 
     go handlerArchiveLoop()
+    go handlerKafkaMessageContent()
 
     kafkaClient := newKafkaClient()
     defer kafkaClient.Close()
@@ -93,7 +97,7 @@ func handlerArchiveLoop() {
             ctime := gtime.Second()
             mtime := gfile.MTime(path)
             if ctime - mtime < 30*86400 {
-                glog.Debugfln("no archive need for %s, %d seconds left", path, 30*86400 - (ctime - mtime))
+                //glog.Debugfln("no archive need for %s, %d seconds left", path, 30*86400 - (ctime - mtime))
                 continue
             }
             archivePath := path + ".tar.bz2"
@@ -148,6 +152,29 @@ func handlerKafkaTopic(topic string) {
     }
 }
 
+// 异步批量保存kafka日志
+func handlerKafkaMessageContent() {
+    for {
+        time.Sleep(KAFKA_MSG_SAVE_INTERVAL*time.Second)
+        bufferMap.LockFunc(func(m map[string]interface{}) {
+            for k, v := range m {
+                buffer  := v.(*bytes.Buffer)
+                content := buffer.Bytes()
+                if len(content) > 0 {
+                    if err := gfile.PutBinContentsAppend(k, content); err != nil {
+                        glog.Error(err)
+                        // 如果日志写失败，等待1秒后继续
+                        time.Sleep(time.Second)
+                    } else {
+                        glog.Debugfln("bytes written [%s: %d]", k, len(content))
+                        buffer.Reset()
+                    }
+                }
+            }
+        })
+    }
+}
+
 // 创建kafka客户端
 func newKafkaClient(topic ... string) *gkafka.Client {
     kafkaConfig               := gkafka.NewConfig()
@@ -175,10 +202,12 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
         if msgTime.IsZero() {
             msgTime = parserFileBeatTime(j.GetString("@timestamp"))
         }
-        path := j.GetString("source")
-        if err := gfile.PutContentsAppend(path, content + "\n"); err != nil {
-            return err
-        }
+        path   := j.GetString("source")
+        buffer := bufferMap.GetOrSetFunc(path, func() interface{} {
+            return bytes.NewBuffer(nil)
+        }).(*bytes.Buffer)
+        buffer.WriteString(content)
+        buffer.WriteString("\n")
     }
     return nil
 }
