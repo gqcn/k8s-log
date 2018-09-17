@@ -92,29 +92,31 @@ func handlerArchiveLoop() {
             // 日志文件超过30天，那么执行归档
             ctime := gtime.Second()
             mtime := gfile.MTime(path)
-            if ctime - mtime > 30*86400 {
-                archivePath := path + ".tar.bz2"
-                existIndex  := 1
-                for gfile.Exists(archivePath) {
-                    archivePath = fmt.Sprintf("%s.%d.tar.bz2", path, existIndex)
-                    existIndex++
-                }
+            if ctime - mtime < 30*86400 {
+                glog.Debugfln("no archive need for %s, %d seconds left", path, 30*86400 - (ctime - mtime))
+                continue
+            }
+            archivePath := path + ".tar.bz2"
+            existIndex  := 1
+            for gfile.Exists(archivePath) {
+                archivePath = fmt.Sprintf("%s.%d.tar.bz2", path, existIndex)
+                existIndex++
+            }
 
-                // 进入日志目录
-                if err := os.Chdir(gfile.Dir(path)); err != nil {
-                    glog.Error(err)
-                    continue
-                }
-                // 执行日志文件归档
-                cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
-                glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
-                if err := cmd.Run(); err == nil {
-                    if err := gfile.Remove(path); err != nil {
-                        glog.Error(err)
-                    }
-                } else {
+            // 进入日志目录
+            if err := os.Chdir(gfile.Dir(path)); err != nil {
+                glog.Error(err)
+                continue
+            }
+            // 执行日志文件归档
+            cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
+            glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
+            if err := cmd.Run(); err == nil {
+                if err := gfile.Remove(path); err != nil {
                     glog.Error(err)
                 }
+            } else {
+                glog.Error(err)
             }
         }
 
