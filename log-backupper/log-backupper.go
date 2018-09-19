@@ -16,33 +16,33 @@ import (
     "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/os/gfile"
-    "gitee.com/johng/gf/g/os/genv"
     "os/exec"
     "os"
     "gitee.com/johng/gf/g/util/gconv"
-    "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/util/gregex"
     "gitee.com/johng/gf/g/container/gmap"
     "fmt"
-    "bytes"
+    "gitee.com/johng/gf/g/os/genv"
 )
 
 const (
-    LOG_PATH                    = "/var/log/medlinker" // 日志目录
-    TOPIC_AUTO_CHECK_INTERVAL   = 5                    // (秒)kafka topic检测时间间隔
-    ARCHIVE_AUTO_CHECK_INTERVAL = 3600                 // (秒)自动压缩归档检测时间间隔
-    KAFKA_MSG_HANDLER_NUM       = 100                  // 并发的kafka消息消费goroutine数量
-    KAFKA_MSG_SAVE_INTERVAL     = 5                    // (秒) kafka消息内容批量保存间隔
+    LOG_PATH                    = "/var/log/medlinker"  // 日志目录
+    TOPIC_AUTO_CHECK_INTERVAL   = 5                     // (秒)kafka topic检测时间间隔
+    ARCHIVE_AUTO_CHECK_INTERVAL = 3600                  // (秒)自动压缩归档检测时间间隔
+    KAFKA_MSG_HANDLER_NUM       = 100                   // 并发的kafka消息消费goroutine数量
+    KAFKA_MSG_SAVE_INTERVAL     = 10                    // (秒) kafka消息内容批量保存间隔
+    KAFKA_OFFSETS_DIR_NAME      = "__backupper_offsets" // 用于保存应用端offsets的目录名称
 )
 
 var (
-    debug     bool
-    kafkaAddr string
-    topicSet    = gset.NewStringSet()
-    pathQueues  = gmap.NewStringInterfaceMap()
-    handlerSize = gconv.Int(gcmd.Option.Get("handler-size"))
-    bufferMap   = gmap.NewStringInterfaceMap()
-    handlerChan  chan struct{}
+    debug       bool
+    kafkaAddr   string
+    handlerChan chan struct{}
+
+    saveInterval   = gconv.Int(gcmd.Option.Get("save-interval"))
+    handlerSize    = gconv.Int(gcmd.Option.Get("handler-size"))
+    bufferMap      = gmap.NewStringInterfaceMap()
+    topicMap       = gmap.NewStringInterfaceMap()
 )
 
 func main() {
@@ -51,19 +51,24 @@ func main() {
     kafkaAddr = gcmd.Option.Get("kafka-addr")
     // 通过环境变量传参
     if kafkaAddr == "" {
-        debug       = gconv.Bool(genv.Get("DEBUG"))
-        kafkaAddr   = genv.Get("KAFKA_ADDR")
-        handlerSize = gconv.Int(genv.Get("HANDLER_SIZE"))
+        debug        = gconv.Bool(genv.Get("DEBUG"))
+        kafkaAddr    = genv.Get("KAFKA_ADDR")
+        handlerSize  = gconv.Int(genv.Get("HANDLER_SIZE"))
+        saveInterval = gconv.Int(genv.Get("SAVE_INTERVAL"))
     }
     if kafkaAddr == "" {
-        panic("Incomplete Kafka setting")
+       panic("Incomplete Kafka setting")
     }
     if handlerSize == 0 {
-        handlerSize = KAFKA_MSG_HANDLER_NUM
+       handlerSize = KAFKA_MSG_HANDLER_NUM
+    }
+    if saveInterval == 0 {
+        saveInterval = KAFKA_MSG_SAVE_INTERVAL
     }
     // 用于限制kafka消费异步gorutine数量
     handlerChan = make(chan struct{}, handlerSize)
 
+    // 是否显示调试信息
     glog.SetDebug(debug)
 
     go handlerArchiveLoop()
@@ -72,19 +77,19 @@ func main() {
     kafkaClient := newKafkaClient()
     defer kafkaClient.Close()
     for {
-        if topics, err := kafkaClient.Topics(); err == nil {
-            for _, topic := range topics {
-                if !topicSet.Contains(topic) {
-                    glog.Debugfln("add new topic handle: %s", topic)
-                    topicSet.Add(topic)
-                    go handlerKafkaTopic(topic)
-                }
-            }
-        } else {
-            glog.Error(err)
-            break
-        }
-        time.Sleep(TOPIC_AUTO_CHECK_INTERVAL*time.Second)
+       if topics, err := kafkaClient.Topics(); err == nil {
+           for _, topic := range topics {
+               if !topicMap.Contains(topic) {
+                   glog.Debugfln("add new topic handle: %s", topic)
+                   topicMap.Set(topic, gmap.NewStringIntMap())
+                   go handlerKafkaTopic(topic)
+               }
+           }
+       } else {
+           glog.Error(err)
+           break
+       }
+       time.Sleep(TOPIC_AUTO_CHECK_INTERVAL*time.Second)
     }
 }
 
@@ -133,11 +138,33 @@ func handlerKafkaTopic(topic string) {
     kafkaClient := newKafkaClient(topic)
     defer func() {
         kafkaClient.Close()
-        topicSet.Remove(topic)
+        topicMap.Remove(topic)
     }()
+    // 初始化topic offset
+    offsetMap := topicMap.Get(topic).(*gmap.StringIntMap)
+    initOffsetMap(topic, offsetMap)
+    // 标记kafka指定topic partition的offset
+    offsetMap.RLockFunc(func(m map[string]int) {
+        for k, v := range m {
+            if v > 0 {
+                if match, _ := gregex.MatchString(`(.+)\.(\d+)`, k); len(match) == 3 {
+                    // 从下一条读取，这里的offset+1
+                    glog.Debugfln("mark kafka offset - topic: %s, partition: %s, offset: %d", topic, match[2], v + 1)
+                    kafkaClient.MarkOffset(topic, gconv.Int(match[2]), v + 1)
+                }
+            }
+        }
+    })
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
-            //glog.Debugfln("receive topic [%s] msg: %s", topic, string(msg.Value))
+            // 记录offset
+            key := fmt.Sprintf("%s.%d", topic, msg.Partition)
+            if msg.Offset <= offsetMap.Get(key) {
+                msg.MarkOffset()
+                continue
+            }
+            offsetMap.Set(key, msg.Offset)
+
             handlerChan <- struct{}{}
             go func() {
                 handlerKafkaMessage(msg)
@@ -152,24 +179,57 @@ func handlerKafkaTopic(topic string) {
     }
 }
 
+// 初始化topic offset
+func initOffsetMap(topic string, offsetMap *gmap.StringIntMap) {
+    for i := 0; i < 100; i++ {
+        key  := fmt.Sprintf("%s.%d", topic, i)
+        path := fmt.Sprintf("%s/%s/%s", LOG_PATH, KAFKA_OFFSETS_DIR_NAME, key)
+        if !gfile.Exists(path) {
+            break
+        }
+        offsetMap.Set(key, gconv.Int(gfile.GetContents(path)))
+    }
+}
+
+// 应用自定义保存当前kafka读取的offset
+func dumpOffsetMap(offsetMap *gmap.StringIntMap) {
+    offsetMap.RLockFunc(func(m map[string]int) {
+        for k, v := range m {
+            if v == 0 {
+                continue
+            }
+            path    := fmt.Sprintf("%s/%s/%s", LOG_PATH, KAFKA_OFFSETS_DIR_NAME, k)
+            content := gconv.String(v)
+            gfile.PutContents(path, content)
+            //glog.Debugfln("dumped offset map: %s, %s", path, content)
+        }
+    })
+}
+
 // 异步批量保存kafka日志
 func handlerKafkaMessageContent() {
     for {
-        time.Sleep(KAFKA_MSG_SAVE_INTERVAL*time.Second)
-        bufferMap.LockFunc(func(m map[string]interface{}) {
-            for k, v := range m {
-                buffer  := v.(*bytes.Buffer)
-                content := buffer.Bytes()
-                if len(content) > 0 {
-                    if err := gfile.PutBinContentsAppend(k, content); err != nil {
-                        glog.Error(err)
-                        // 如果日志写失败，等待1秒后继续
-                        time.Sleep(time.Second)
-                    } else {
-                        glog.Debugfln("bytes written [%s: %d]", k, len(content))
-                        buffer.Reset()
-                    }
-                }
+        time.Sleep(time.Duration(saveInterval)*time.Second)
+        //bufferMap.LockFunc(func(m map[string]interface{}) {
+        //    for k, v := range m {
+        //        buffer  := v.(*bytes.Buffer)
+        //        content := buffer.Bytes()
+        //        if len(content) > 0 {
+        //            if err := gfile.PutBinContentsAppend(k, content); err != nil {
+        //                glog.Error(err)
+        //                // 如果日志写失败，等待1秒后继续
+        //                time.Sleep(time.Second)
+        //            } else {
+        //                glog.Debugfln("bytes written [%s: %d]", k, len(content))
+        //                buffer.Reset()
+        //            }
+        //        }
+        //    }
+        //})
+        // 导出topic offset到磁盘保存
+        topicMap.RLockFunc(func(m map[string]interface{}) {
+            for _, v := range m {
+                go dumpOffsetMap(v.(*gmap.StringIntMap))
             }
         })
     }
@@ -180,11 +240,9 @@ func newKafkaClient(topic ... string) *gkafka.Client {
     kafkaConfig               := gkafka.NewConfig()
     kafkaConfig.Servers        = kafkaAddr
     kafkaConfig.AutoMarkOffset = false
+    kafkaConfig.GroupId        = "group_log_backupper"
     if len(topic) > 0 {
-        kafkaConfig.Topics  = topic[0]
-        kafkaConfig.GroupId = "group_" + topic[0] + "_backupper"
-    } else {
-        kafkaConfig.GroupId = "group_default_backupper"
+        kafkaConfig.Topics = topic[0]
     }
     return gkafka.NewClient(kafkaConfig)
 }
@@ -198,16 +256,22 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
     }()
     if j, err := gjson.DecodeToJson(kafkaMsg.Value); err == nil {
         content := j.GetString("message")
-        msgTime := getTimeFromContent(content)
-        if msgTime.IsZero() {
-            msgTime = parserFileBeatTime(j.GetString("@timestamp"))
+        if len(content) == 0 {
+            return nil
         }
-        path   := j.GetString("source")
-        buffer := bufferMap.GetOrSetFunc(path, func() interface{} {
-            return bytes.NewBuffer(nil)
-        }).(*bytes.Buffer)
-        buffer.WriteString(content)
-        buffer.WriteString("\n")
+        if err := gfile.PutContentsAppend(j.GetString("source"), content + "\n"); err != nil {
+            return err
+        }
+        //msgTime := getTimeFromContent(content)
+        //if msgTime.IsZero() {
+        //    msgTime = parserFileBeatTime(j.GetString("@timestamp"))
+        //}
+        //path   := j.GetString("source")
+        //buffer := bufferMap.GetOrSetFunc(path, func() interface{} {
+        //    return bytes.NewBuffer(nil)
+        //}).(*bytes.Buffer)
+        //buffer.WriteString(content)
+        //buffer.WriteString("\n")
     }
     return nil
 }
