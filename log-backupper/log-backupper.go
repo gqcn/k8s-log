@@ -210,22 +210,25 @@ func dumpOffsetMap(offsetMap *gmap.StringIntMap) {
 func handlerKafkaMessageContent() {
     for {
         time.Sleep(time.Duration(saveInterval)*time.Second)
+
+        // 批量写日志
         //bufferMap.LockFunc(func(m map[string]interface{}) {
-        //    for k, v := range m {
-        //        buffer  := v.(*bytes.Buffer)
-        //        content := buffer.Bytes()
-        //        if len(content) > 0 {
-        //            if err := gfile.PutBinContentsAppend(k, content); err != nil {
-        //                glog.Error(err)
-        //                // 如果日志写失败，等待1秒后继续
-        //                time.Sleep(time.Second)
-        //            } else {
-        //                glog.Debugfln("bytes written [%s: %d]", k, len(content))
-        //                buffer.Reset()
-        //            }
-        //        }
-        //    }
+        //   for k, v := range m {
+        //       buffer  := v.(*bytes.Buffer)
+        //       content := buffer.Bytes()
+        //       if len(content) > 0 {
+        //           if err := gfile.PutBinContentsAppend(k, content); err != nil {
+        //               // 如果日志写失败，等待1秒后继续
+        //               glog.Error(err)
+        //               time.Sleep(time.Second)
+        //           } else {
+        //               glog.Debugfln("bytes written [%s: %d]", k, len(content))
+        //               buffer.Reset()
+        //           }
+        //       }
+        //   }
         //})
+
         // 导出topic offset到磁盘保存
         topicMap.RLockFunc(func(m map[string]interface{}) {
             for _, v := range m {
@@ -259,16 +262,20 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
         if len(content) == 0 {
             return nil
         }
+
+        // 单条写日志
         if err := gfile.PutContentsAppend(j.GetString("source"), content + "\n"); err != nil {
-            return err
+           return err
         }
+
+        // 批量写日志
         //msgTime := getTimeFromContent(content)
         //if msgTime.IsZero() {
-        //    msgTime = parserFileBeatTime(j.GetString("@timestamp"))
+        //   msgTime = parserFileBeatTime(j.GetString("@timestamp"))
         //}
         //path   := j.GetString("source")
-        //buffer := bufferMap.GetOrSetFunc(path, func() interface{} {
-        //    return bytes.NewBuffer(nil)
+        //buffer := bufferMap.GetOrSetFuncLock(path, func() interface{} {
+        //   return bytes.NewBuffer(nil)
         //}).(*bytes.Buffer)
         //buffer.WriteString(content)
         //buffer.WriteString("\n")
