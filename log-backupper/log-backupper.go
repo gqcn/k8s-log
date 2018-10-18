@@ -23,6 +23,8 @@ import (
     "gitee.com/johng/gf/g/container/gmap"
     "fmt"
     "gitee.com/johng/gf/g/os/genv"
+    "bytes"
+    "gitee.com/johng/gf/g/os/gmlock"
 )
 
 const (
@@ -30,7 +32,7 @@ const (
     TOPIC_AUTO_CHECK_INTERVAL   = 5                     // (秒)kafka topic检测时间间隔
     ARCHIVE_AUTO_CHECK_INTERVAL = 3600                  // (秒)自动压缩归档检测时间间隔
     KAFKA_MSG_HANDLER_NUM       = 100                   // 并发的kafka消息消费goroutine数量
-    KAFKA_MSG_SAVE_INTERVAL     = 10                    // (秒) kafka消息内容批量保存间隔
+    KAFKA_MSG_SAVE_INTERVAL     = 5                     // (秒) kafka消息内容批量保存间隔
     KAFKA_OFFSETS_DIR_NAME      = "__backupper_offsets" // 用于保存应用端offsets的目录名称
 )
 
@@ -99,10 +101,7 @@ func handlerArchiveLoop() {
         paths, _ := gfile.ScanDir(LOG_PATH, "*.log", true)
         for _, path := range paths {
             // 日志文件超过30天，那么执行归档
-            ctime := gtime.Second()
-            mtime := gfile.MTime(path)
-            if ctime - mtime < 30*86400 {
-                //glog.Debugfln("no archive need for %s, %d seconds left", path, 30*86400 - (ctime - mtime))
+            if gtime.Second() - gfile.MTime(path) < 30*86400 {
                 continue
             }
             archivePath := path + ".tar.bz2"
@@ -163,11 +162,11 @@ func handlerKafkaTopic(topic string) {
                 msg.MarkOffset()
                 continue
             }
-            offsetMap.Set(key, msg.Offset)
-
             handlerChan <- struct{}{}
             go func() {
                 handlerKafkaMessage(msg)
+                // 处理完成再记录到自定义的offset表中(不管是否缓冲处理)
+                offsetMap.Set(key, msg.Offset)
                 <- handlerChan
             }()
         } else {
@@ -212,22 +211,22 @@ func handlerKafkaMessageContent() {
         time.Sleep(time.Duration(saveInterval)*time.Second)
 
         // 批量写日志
-        //bufferMap.LockFunc(func(m map[string]interface{}) {
-        //   for k, v := range m {
-        //       buffer  := v.(*bytes.Buffer)
-        //       content := buffer.Bytes()
-        //       if len(content) > 0 {
-        //           if err := gfile.PutBinContentsAppend(k, content); err != nil {
-        //               // 如果日志写失败，等待1秒后继续
-        //               glog.Error(err)
-        //               time.Sleep(time.Second)
-        //           } else {
-        //               glog.Debugfln("bytes written [%s: %d]", k, len(content))
-        //               buffer.Reset()
-        //           }
-        //       }
-        //   }
-        //})
+        for _, path := range bufferMap.Keys() {
+            gmlock.Lock(path)
+            buffer  := bufferMap.Get(path).(*bytes.Buffer)
+            content := buffer.Bytes()
+            if len(content) > 0 {
+                if err := gfile.PutBinContentsAppend(path, content); err != nil {
+                    // 如果日志写失败，等待1秒后继续
+                    glog.Error(err)
+                    time.Sleep(time.Second)
+                } else {
+                    glog.Debugfln("bytes written %d \t %s", len(content), path)
+                    buffer.Reset()
+                }
+            }
+            gmlock.Unlock(path)
+        }
 
         // 导出topic offset到磁盘保存
         topicMap.RLockFunc(func(m map[string]interface{}) {
@@ -264,21 +263,21 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
         }
 
         // 单条写日志
-        if err := gfile.PutContentsAppend(j.GetString("source"), content + "\n"); err != nil {
-           return err
-        }
+        //if err := gfile.PutContentsAppend(j.GetString("source"), content + "\n"); err != nil {
+        //   return err
+        //}
 
         // 批量写日志
-        //msgTime := getTimeFromContent(content)
-        //if msgTime.IsZero() {
-        //   msgTime = parserFileBeatTime(j.GetString("@timestamp"))
-        //}
-        //path   := j.GetString("source")
-        //buffer := bufferMap.GetOrSetFuncLock(path, func() interface{} {
-        //   return bytes.NewBuffer(nil)
-        //}).(*bytes.Buffer)
-        //buffer.WriteString(content)
-        //buffer.WriteString("\n")
+        path   := j.GetString("source")
+        buffer := bufferMap.GetOrSetFuncLock(path, func() interface{} {
+          return bytes.NewBuffer(nil)
+        }).(*bytes.Buffer)
+
+        // 使用内存锁保证同一个文件的buffer写入的并发安全性
+        gmlock.Lock(path)
+        buffer.WriteString(content)
+        buffer.WriteString("\n")
+        gmlock.Unlock(path)
     }
     return nil
 }
