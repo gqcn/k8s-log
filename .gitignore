@@ -14,3 +14,4 @@ pkg/
 bin/
 cbuild
 test.go
+go.sum

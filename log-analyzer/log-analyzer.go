@@ -124,7 +124,8 @@ func main() {
     for {
         if topics, err := kafkaClient.Topics(); err == nil {
             for _, topic := range topics {
-                if !topicSet.Contains(topic) {
+                // 只能处理旧版topic，新版处理程序处理*.v2的topic
+                if !topicSet.Contains(topic) && !gregex.IsMatchString(`.+\.v2`, topic){
                     glog.Debugfln("add new topic handle: %s", topic)
                     topicSet.Add(topic)
                     go handlerKafkaTopic(topic)
