@@ -24,11 +24,11 @@ import (
 const (
     LOG_PATH          = "/var/log/medlinker"         // 默认值，日志目录绝对路径
     OFFSET_FILE_PATH  = "/var/log/log-agent.offsets" // 默认值，偏移量保存map，用于系统重启时恢复日志偏移量读取，继续文件的搜集位置
-    SCAN_INTERVAL     = "10"                 // 默认值，(秒)目录检测间隔，检测新日志文件的创建
-    CLEAN_BUFFER_TIME = "7200"               // 默认值，(秒)当执行清理时，超过多少时间没有更新则执行删除(默认3小时)
-    CLEAN_MAX_SIZE    = "1073741824"         // 默认值，(byte)日志文件最大限制，当清理时执行规则处理；
-    SEND_MAX_SIZE     = "1048576"            // 默认值，(byte)每条消息发送时的最大值(包大小限制, 默认1MB)
-    DEBUG             = "true"               // 默认值，是否打开调试信息
+    SCAN_INTERVAL     = "10"                         // 默认值，(秒)目录检测间隔，检测新日志文件的创建
+    CLEAN_BUFFER_TIME = "86400"                      // 默认值，(秒)当执行清理时，超过多少时间没有更新则执行删除(默认3小时)
+    CLEAN_MAX_SIZE    = "1073741824"                 // 默认值，(byte)日志文件最大限制，当清理时执行规则处理；
+    SEND_MAX_SIZE     = "1048576"                    // 默认值，(byte)每条消息发送时的最大值(包大小限制, 默认1MB)
+    DEBUG             = "true"                       // 默认值，是否打开调试信息
 )
 
 // kafka消息数据结构
@@ -70,7 +70,7 @@ func main() {
     for {
         if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
             for _, path := range list {
-                if !offsetMap.Contains(path) {
+                if gfile.IsFile(path) && !offsetMap.Contains(path) {
                     offsetMap.Set(path, 0)
                     go trackLogFile(path)
                 }
@@ -208,7 +208,7 @@ func sendToKafka(path string, msgs []string) {
         if content, err := gjson.Encode(msg); err != nil {
             glog.Error(err)
         } else {
-            glog.Debug("send to kafka:", path, len(content))
+            glog.Debug("send to kafka:", kafkaTopic, path, len(content))
             if err := kafkaProducer.AsyncSend(&gkafka.Message{Value : content}); err != nil {
                 glog.Error(err)
             } else {

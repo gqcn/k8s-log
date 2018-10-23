@@ -12,6 +12,7 @@ import (
     "gitee.com/johng/gf/g/container/gmap"
     "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/encoding/gjson"
+    "gitee.com/johng/gf/g/os/gcron"
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/glog"
@@ -61,7 +62,9 @@ func main() {
     // 是否显示调试信息
     glog.SetDebug(debug)
 
-    go handlerArchiveLoop()
+    // 定时压缩归档任务
+    gcron.Add("0 0 3 * * *", handlerArchiveCron)
+
     go handlerKafkaMessageContent()
 
     kafkaClient := newKafkaClient()
@@ -70,7 +73,7 @@ func main() {
        if topics, err := kafkaClient.Topics(); err == nil {
            for _, topic := range topics {
                // 只处理新版处理程序处理 *.v2 的topic
-               if !topicMap.Contains(topic) && gregex.IsMatchString(`.+\.v2`, topic){
+               if !topicMap.Contains(topic) && gregex.IsMatchString(`.+\.v2`, topic) {
                    glog.Debugfln("add new topic handle: %s", topic)
                    topicMap.Set(topic, gmap.NewStringIntMap())
                    go handlerKafkaTopic(topic)
@@ -85,39 +88,35 @@ func main() {
 }
 
 // 自动归档检查循环，归档使用tar工具实现
-func handlerArchiveLoop() {
-    for {
-        paths, _ := gfile.ScanDir(logPath, "*.log", true)
-        for _, path := range paths {
-            // 日志文件超过30天，那么执行归档
-            if gtime.Second() - gfile.MTime(path) < 30*86400 {
-                continue
-            }
-            archivePath := path + ".tar.bz2"
-            existIndex  := 1
-            for gfile.Exists(archivePath) {
-                archivePath = fmt.Sprintf("%s.%d.tar.bz2", path, existIndex)
-                existIndex++
-            }
-
-            // 进入日志目录
-            if err := os.Chdir(gfile.Dir(path)); err != nil {
-                glog.Error(err)
-                continue
-            }
-            // 执行日志文件归档
-            cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
-            glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
-            if err := cmd.Run(); err == nil {
-                if err := gfile.Remove(path); err != nil {
-                    glog.Error(err)
-                }
-            } else {
-                glog.Error(err)
-            }
+func handlerArchiveCron() {
+    paths, _ := gfile.ScanDir(logPath, "*.log", true)
+    for _, path := range paths {
+        // 日志文件超过30天，那么执行归档
+        if gtime.Second() - gfile.MTime(path) < 30*86400 {
+            continue
+        }
+        archivePath := path + ".tar.bz2"
+        existIndex  := 1
+        for gfile.Exists(archivePath) {
+            archivePath = fmt.Sprintf("%s.%d.tar.bz2", path, existIndex)
+            existIndex++
         }
 
-        time.Sleep(ARCHIVE_AUTO_CHECK_INTERVAL*time.Second)
+        // 进入日志目录
+        if err := os.Chdir(gfile.Dir(path)); err != nil {
+            glog.Error(err)
+            continue
+        }
+        // 执行日志文件归档
+        cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
+        glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
+        if err := cmd.Run(); err == nil {
+            if err := gfile.Remove(path); err != nil {
+                glog.Error(err)
+            }
+        } else {
+            glog.Error(err)
+        }
     }
 }
 
@@ -230,7 +229,7 @@ func newKafkaClient(topic ... string) *gkafka.Client {
     kafkaConfig               := gkafka.NewConfig()
     kafkaConfig.Servers        = kafkaAddr
     kafkaConfig.AutoMarkOffset = false
-    kafkaConfig.GroupId        = "group_log_backupper"
+    kafkaConfig.GroupId        = "group_log_archiver"
     if len(topic) > 0 {
         kafkaConfig.Topics = topic[0]
     }
@@ -255,6 +254,8 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
             buffer.WriteString(v)
         }
         gmlock.Unlock(msg.Path)
+    } else {
+        glog.Error(err)
     }
     return nil
 }
