@@ -18,6 +18,7 @@ import (
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/util/gregex"
+    "os"
     "time"
 )
 
@@ -36,6 +37,7 @@ type Message struct {
     Path string   `json:"path"` // 日志文件路径
     Msgs []string `json:"msgs"` // 日志内容(多条)
     Time string   `json:"time"` // 发送时间(客户端搜集时间)
+    Host string   `json:"host"` // 节点主机名称
 }
 
 var (
@@ -52,6 +54,7 @@ var (
     kafkaAddr      = genv.Get("KAFKA_ADDR")
     kafkaTopic     = genv.Get("KAFKA_TOPIC")
     kafkaProducer  = newKafkaClientProducer()
+    hostname, _    = os.Hostname()
 )
 
 func main() {
@@ -203,6 +206,7 @@ func sendToKafka(path string, msgs []string) {
         Path : path,
         Msgs : msgs,
         Time : gtime.Now().String(),
+        Host : hostname,
     }
     for {
         if content, err := gjson.Encode(msg); err != nil {

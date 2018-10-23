@@ -40,6 +40,7 @@ type Message struct {
     Path string   `json:"path"` // 日志文件路径
     Msgs []string `json:"msgs"` // 日志内容(多条)
     Time string   `json:"time"` // 发送时间(客户端搜集时间)
+    Host string   `json:"host"` // 节点主机名称
 }
 
 var (
@@ -251,7 +252,7 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
 
         gmlock.Lock(msg.Path)
         for _, v := range msg.Msgs {
-            buffer.WriteString(v)
+            buffer.WriteString(fmt.Sprintf(`%s [%s]%s`, v[0 : len(v) - 1], msg.Host, "\n"))
         }
         gmlock.Unlock(msg.Path)
     } else {
