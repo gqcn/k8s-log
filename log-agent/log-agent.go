@@ -115,18 +115,25 @@ func newKafkaClientProducer() *gkafka.Client {
 func cleanLogCron() {
     if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
         for _, path := range list {
+            if !gfile.IsFile(path) {
+                continue
+            }
             if gtime.Second() - gfile.MTime(path) > bufferTime {
                 // 一定内没有任何更新操作，则删除
+                glog.Debug("remove expired file:", path)
                 gfile.Remove(path)
                 offsetMap.Remove(path)
             } else {
                 // 判断文件大小，超过指定大小则truncate
                 if gfile.Size(path) > int64(cleanMaxSize) {
+                    glog.Debug("truncate size-exceeded file:", path)
                     if err := gfile.Truncate(path, 0); err == nil {
                         offsetMap.Remove(path)
                     } else {
                         glog.Error(err)
                     }
+                } else {
+                    glog.Debug("leave alone file:", path)
                 }
             }
         }
