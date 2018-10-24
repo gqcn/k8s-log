@@ -9,6 +9,7 @@ package main
 import (
     "bytes"
     "gitee.com/johng/gf/g/container/gmap"
+    "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/os/gcron"
@@ -28,7 +29,8 @@ const (
     SCAN_INTERVAL     = "10"                         // 默认值，(秒)目录检测间隔，检测新日志文件的创建
     CLEAN_BUFFER_TIME = "86400"                      // 默认值，(秒)当执行清理时，超过多少时间没有更新则执行删除(默认3小时)
     CLEAN_MAX_SIZE    = "1073741824"                 // 默认值，(byte)日志文件最大限制，当清理时执行规则处理；
-    SEND_MAX_SIZE     = "1048576"                    // 默认值，(byte)每条消息发送时的最大值(包大小限制, 默认1MB)
+    SEND_MAX_SIZE     = "524288"                     // 默认值，(byte)每条消息发送时的最大值(包大小限制, 默认512KB)
+                                                     // 注意：kafka默认的单条消息大小严格限制为1MB，因此该大小不能超过该值
     DEBUG             = "true"                       // 默认值，是否打开调试信息
 )
 
@@ -43,6 +45,7 @@ type Message struct {
 var (
     // 记录日志文件搜集的offset
     offsetMap      = gmap.NewStringIntMap(true)
+    handlerSet     = gset.NewStringSet(true)
     // 以下为通过环境变量传递的参数
     logPath        = genv.Get("LOG_PATH", LOG_PATH)
     offsetFilePath = genv.Get("OFFSET_FILE_PATH", OFFSET_FILE_PATH)
@@ -73,8 +76,7 @@ func main() {
     for {
         if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
             for _, path := range list {
-                if gfile.IsFile(path) && !offsetMap.Contains(path) {
-                    offsetMap.Set(path, 0)
+                if gfile.IsFile(path) && gfile.Ext(path) != ".offsets" {
                     go trackLogFile(path)
                 }
             }
@@ -91,7 +93,7 @@ func initOffsetMap() {
         content := gfile.GetBinContents(offsetFilePath)
         if j, err := gjson.DecodeToJson(content); err == nil {
             for k, v := range j.ToMap(){
-                glog.Debug("init file offset:", k, v)
+                glog.Debug("init file offset:", k, gconv.Int(v))
                 offsetMap.Set(k, gconv.Int(v))
             }
         } else {
@@ -119,10 +121,13 @@ func cleanLogCron() {
                 continue
             }
             if gtime.Second() - gfile.MTime(path) > bufferTime {
-                // 一定内没有任何更新操作，则删除
-                glog.Debug("remove expired file:", path)
-                gfile.Remove(path)
-                offsetMap.Remove(path)
+                // 一定内没有任何更新操作，则truncate
+                glog.Debug("truncate expired file:", path)
+                if err := gfile.Truncate(path, 0); err == nil {
+                    offsetMap.Remove(path)
+                } else {
+                    glog.Error(err)
+                }
             } else {
                 // 判断文件大小，超过指定大小则truncate
                 if gfile.Size(path) > int64(cleanMaxSize) {
@@ -158,6 +163,22 @@ func saveOffsetCron() {
 
 // 执行对指定日志文件的搜集监听
 func trackLogFile(path string) {
+    // 日志文件大于0才开始执行监听
+    if gfile.Size(path) == 0 {
+        return
+    }
+
+    // 判断goroutine是否存在
+    if handlerSet.Contains(path) {
+        return
+    }
+    handlerSet.Add(path)
+    defer handlerSet.Remove(path)
+
+    // offset初始化
+    if !offsetMap.Contains(path) {
+        offsetMap.Set(path, 0)
+    }
     glog.Println("add log file track:", path)
     for {
         // 每隔1秒钟检查文件变化(不采用fsnotify通知机制)
@@ -220,7 +241,7 @@ func sendToKafka(path string, msgs []string) {
             glog.Error(err)
         } else {
             glog.Debug("send to kafka:", kafkaTopic, path, len(content))
-            if err := kafkaProducer.AsyncSend(&gkafka.Message{Value : content}); err != nil {
+            if err := kafkaProducer.SyncSend(&gkafka.Message{Value : content}); err != nil {
                 glog.Error(err)
             } else {
                 break
