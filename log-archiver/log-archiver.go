@@ -8,15 +8,23 @@ package main
 
 import (
     "bytes"
+    "errors"
     "fmt"
     "gitee.com/johng/gf/g/container/gmap"
+    "gitee.com/johng/gf/g/database/gkafka"
+    "gitee.com/johng/gf/g/encoding/gjson"
+    "gitee.com/johng/gf/g/os/gcache"
     "gitee.com/johng/gf/g/os/gcron"
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/os/gmlock"
+    "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/util/gregex"
+    "os"
+    "os/exec"
+    "strings"
     "time"
 )
 
@@ -29,6 +37,14 @@ const (
     KAFKA_GROUP_NAME            = "group_log_archiver"  // kafka消费端分组名称
     DEBUG                       = "true"                // 默认值，是否打开调试信息
 )
+
+// kafka消息包
+type Package struct {
+    Id    int64  `json:"id"`     // 消息包ID，当被拆包时，多个分包的包id相同
+    Seq   int    `json:"seq"`    // 序列号(当消息包被拆时用于整合打包)
+    Total int    `json:"total"`  // 总分包数(当只有一个包时，sqp = total = 1)
+    Msg   []byte `json:"msg"`    // 消息数据(二进制)
+}
 
 // kafka消息数据结构
 type Message struct {
@@ -48,6 +64,7 @@ var (
     saveInterval   = gconv.Int(genv.Get("SAVE_INTERVAL", KAFKA_MSG_SAVE_INTERVAL))
     kafkaAddr      = genv.Get("KAFKA_ADDR")
     kafkaClient    = newKafkaClient()
+    pkgCache       = gcache.New()
 )
 
 func main() {
@@ -63,7 +80,7 @@ func main() {
        if topics, err := kafkaClient.Topics(); err == nil {
            for _, topic := range topics {
                // 只处理新版处理程序处理 *.v2 的topic
-               if !topicMap.Contains(topic) && gregex.IsMatchString(`.+\.v2`, topic) {
+               if !topicMap.Contains(topic) && gregex.IsMatchString(`.+\.v3`, topic) {
                    glog.Debugfln("add new topic handle: %s", topic)
                    topicMap.Set(topic, gmap.NewStringIntMap())
                    go handlerKafkaTopic(topic)
@@ -183,3 +200,116 @@ func handlerKafkaMessageContent() {
     }
 }
 
+// 自动归档检查循环，归档使用tar工具实现
+func handlerArchiveCron() {
+    paths, _ := gfile.ScanDir(logPath, "*.log", true)
+    for _, path := range paths {
+        // 日志文件超过30天，那么执行归档
+        if gtime.Second() - gfile.MTime(path) < 30*86400 {
+            continue
+        }
+        archivePath := path + ".tar.bz2"
+        existIndex  := 1
+        for gfile.Exists(archivePath) {
+            archivePath = fmt.Sprintf("%s.%d.tar.bz2", path, existIndex)
+            existIndex++
+        }
+
+        // 进入日志目录
+        if err := os.Chdir(gfile.Dir(path)); err != nil {
+            glog.Error(err)
+            continue
+        }
+        // 执行日志文件归档
+        cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
+        glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
+        if err := cmd.Run(); err == nil {
+            if err := gfile.Remove(path); err != nil {
+                glog.Error(err)
+            }
+        } else {
+            glog.Error(err)
+        }
+    }
+}
+
+// 创建kafka客户端
+func newKafkaClient(topic ... string) *gkafka.Client {
+    if kafkaAddr == "" {
+        panic("Incomplete Kafka setting")
+    }
+    kafkaConfig               := gkafka.NewConfig()
+    kafkaConfig.Servers        = kafkaAddr
+    kafkaConfig.AutoMarkOffset = false
+    kafkaConfig.GroupId        = KAFKA_GROUP_NAME
+    if len(topic) > 0 {
+        kafkaConfig.Topics = topic[0]
+    }
+    return gkafka.NewClient(kafkaConfig)
+}
+
+// 处理kafka消息(使用自定义的数据结构)
+func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
+    defer func() {
+        if err == nil {
+            kafkaMsg.MarkOffset()
+        }
+    }()
+    pkg := &Package{}
+    if err = gjson.DecodeTo(kafkaMsg.Value, pkg); err == nil {
+        buffer := bytes.NewBuffer(nil)
+        if pkg.Total > 1 {
+            if pkg.Seq < pkg.Total {
+                pkgCache.Set(fmt.Sprintf("%d-%d", pkg.Id, pkg.Seq), pkg.Msg, 60000)
+                //glog.Debugfln("cache pkg: %d, seq: %d, total: %d", pkg.Id, pkg.Seq, pkg.Total)
+                return nil
+            } else {
+                start := gtime.Second()
+                for {
+                    if gtime.Second() - start > 60 {
+                        return errors.New(fmt.Sprintf("incomplete package found: %d", pkg.Id))
+                    }
+                    for i := 1; i < pkg.Total; i++ {
+                        if v := pkgCache.Get(fmt.Sprintf("%d-%d", pkg.Id, i)); v != nil {
+                            buffer.Write(v.([]byte))
+                        } else {
+                            //glog.Debugfln("incomplete pkg: %d, seq: %d, total: %d, missing: %d", pkg.Id, pkg.Seq, pkg.Total, i)
+                            break
+                        }
+                        if i == pkg.Total - 1 {
+                            // 使用完毕后清理分包缓存，防止内存占用
+                            for i := 1; i < pkg.Total; i++ {
+                                pkgCache.Remove(fmt.Sprintf("%d-%d", pkg.Id, i))
+                            }
+                            //glog.Debugfln("remove pkg cache: %d", pkg.Id)
+                            buffer.Write(pkg.Msg)
+                            goto MsgHandle
+                        }
+                    }
+                    // 如果包不完整，等待1秒后重试，最长等待1分钟
+                    time.Sleep(time.Second)
+                }
+            }
+        } else {
+            buffer.Write(pkg.Msg)
+        }
+
+MsgHandle:
+        msg := &Message{}
+        if err = gjson.DecodeTo(buffer.Bytes(), msg); err != nil {
+            glog.Error(err)
+        }
+        // 使用内存锁保证同一时刻只有一个goroutine在操作buffer
+        gmlock.Lock(msg.Path)
+        buffer = bufferMap.GetOrSetFuncLock(msg.Path, func() interface{} {
+            return bytes.NewBuffer(nil)
+        }).(*bytes.Buffer)
+        for _, v := range msg.Msgs {
+            buffer.WriteString(fmt.Sprintf("%s [%s]\n", strings.TrimRight(v, "\r\n"), msg.Host))
+        }
+        gmlock.Unlock(msg.Path)
+    } else {
+        glog.Error(err)
+    }
+    return nil
+}
