@@ -10,18 +10,13 @@ import (
     "bytes"
     "fmt"
     "gitee.com/johng/gf/g/container/gmap"
-    "gitee.com/johng/gf/g/database/gkafka"
-    "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/os/gcron"
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/os/gmlock"
-    "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/util/gregex"
-    "os"
-    "os/exec"
     "time"
 )
 
@@ -31,6 +26,7 @@ const (
     KAFKA_MSG_HANDLER_NUM       = "100"                 // 并发的kafka消息消费goroutine数量
     KAFKA_MSG_SAVE_INTERVAL     = "5"                   // (秒) kafka消息内容批量保存间隔
     KAFKA_OFFSETS_DIR_NAME      = "__backupper_offsets" // 用于保存应用端offsets的目录名称
+    KAFKA_GROUP_NAME            = "group_log_archiver"  // kafka消费端分组名称
     DEBUG                       = "true"                // 默认值，是否打开调试信息
 )
 
@@ -44,7 +40,6 @@ type Message struct {
 
 var (
     logPath        = genv.Get("LOG_PATH", LOG_PATH)
-    // 用于限制kafka消费异步gorutine数量
     handlerChan    = make(chan struct{}, handlerSize)
     bufferMap      = gmap.NewStringInterfaceMap()
     topicMap       = gmap.NewStringInterfaceMap()
@@ -52,13 +47,10 @@ var (
     handlerSize    = gconv.Int(genv.Get("HANDLER_SIZE", KAFKA_MSG_HANDLER_NUM))
     saveInterval   = gconv.Int(genv.Get("SAVE_INTERVAL", KAFKA_MSG_SAVE_INTERVAL))
     kafkaAddr      = genv.Get("KAFKA_ADDR")
+    kafkaClient    = newKafkaClient()
 )
 
 func main() {
-    if kafkaAddr == "" {
-       panic("Incomplete Kafka setting")
-    }
-
     // 是否显示调试信息
     glog.SetDebug(debug)
 
@@ -67,8 +59,6 @@ func main() {
 
     go handlerKafkaMessageContent()
 
-    kafkaClient := newKafkaClient()
-    defer kafkaClient.Close()
     for {
        if topics, err := kafkaClient.Topics(); err == nil {
            for _, topic := range topics {
@@ -86,39 +76,6 @@ func main() {
            break
        }
        time.Sleep(TOPIC_AUTO_CHECK_INTERVAL*time.Second)
-    }
-}
-
-// 自动归档检查循环，归档使用tar工具实现
-func handlerArchiveCron() {
-    paths, _ := gfile.ScanDir(logPath, "*.log", true)
-    for _, path := range paths {
-        // 日志文件超过30天，那么执行归档
-        if gtime.Second() - gfile.MTime(path) < 30*86400 {
-            continue
-        }
-        archivePath := path + ".tar.bz2"
-        existIndex  := 1
-        for gfile.Exists(archivePath) {
-            archivePath = fmt.Sprintf("%s.%d.tar.bz2", path, existIndex)
-            existIndex++
-        }
-
-        // 进入日志目录
-        if err := os.Chdir(gfile.Dir(path)); err != nil {
-            glog.Error(err)
-            continue
-        }
-        // 执行日志文件归档
-        cmd := exec.Command("tar", "-jvcf",  archivePath, gfile.Basename(path))
-        glog.Debugfln("tar -jvcf %s %s", archivePath, gfile.Basename(path))
-        if err := cmd.Run(); err == nil {
-            if err := gfile.Remove(path); err != nil {
-                glog.Error(err)
-            }
-        } else {
-            glog.Error(err)
-        }
     }
 }
 
@@ -226,38 +183,3 @@ func handlerKafkaMessageContent() {
     }
 }
 
-// 创建kafka客户端
-func newKafkaClient(topic ... string) *gkafka.Client {
-    kafkaConfig               := gkafka.NewConfig()
-    kafkaConfig.Servers        = kafkaAddr
-    kafkaConfig.AutoMarkOffset = false
-    kafkaConfig.GroupId        = "group_log_archiver"
-    if len(topic) > 0 {
-        kafkaConfig.Topics = topic[0]
-    }
-    return gkafka.NewClient(kafkaConfig)
-}
-
-// 处理kafka消息(使用自定义的数据结构)
-func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
-    defer func() {
-        if err == nil {
-            kafkaMsg.MarkOffset()
-        }
-    }()
-    msg := &Message{}
-    if err := gjson.DecodeTo(kafkaMsg.Value, msg); err == nil {
-        buffer := bufferMap.GetOrSetFuncLock(msg.Path, func() interface{} {
-            return bytes.NewBuffer(nil)
-        }).(*bytes.Buffer)
-
-        gmlock.Lock(msg.Path)
-        for _, v := range msg.Msgs {
-            buffer.WriteString(fmt.Sprintf(`%s [%s]%s`, v[0 : len(v) - 1], msg.Host, "\n"))
-        }
-        gmlock.Unlock(msg.Path)
-    } else {
-        glog.Error(err)
-    }
-    return nil
-}
