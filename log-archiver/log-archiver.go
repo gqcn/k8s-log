@@ -128,9 +128,9 @@ func handlerKafkaTopic(topic string) {
             }
             handlerChan <- struct{}{}
             go func() {
-                handlerKafkaMessage(msg)
-                // 处理完成再记录到自定义的offset表中(不管是否缓冲处理)
-                offsetMap.Set(key, msg.Offset)
+                if handlerKafkaMessage(msg) == nil {
+                    offsetMap.Set(key, msg.Offset)
+                }
                 <- handlerChan
             }()
         } else {
@@ -311,5 +311,5 @@ MsgHandle:
     } else {
         glog.Error(err)
     }
-    return nil
+    return
 }
