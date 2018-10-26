@@ -158,12 +158,11 @@ func trackLogFile(path string) {
                                 sendToKafka(path, msgs, pos)
                                 msgs    = make([]string, 0)
                                 msgSize = 0
-                            } else {
-                                msgs     = append(msgs, buffer.String())
-                                msgSize += buffer.Len()
-                                buffer.Reset()
-                                buffer.Write(content)
                             }
+                            msgs     = append(msgs, buffer.String())
+                            msgSize += buffer.Len()
+                            buffer.Reset()
+                            buffer.Write(content)
                         }
                     } else {
                         buffer.Write(content)
