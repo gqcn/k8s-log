@@ -279,7 +279,7 @@ func sendToKafka(path string, msgs []string, offset int64) {
                     if pkgBytes, err := gjson.Encode(pkg); err != nil {
                         glog.Error(err)
                     } else {
-                        glog.Debug("send to kafka:", kafkaTopic, path, len(pkg.Msg))
+                        glog.Debug("send to kafka:", kafkaTopic, path, len(msgBytes), pos, pos + sendMaxSize)
                         if err := kafkaProducer.SyncSend(&gkafka.Message{Value : pkgBytes}); err != nil {
                            glog.Error(err)
                         } else {

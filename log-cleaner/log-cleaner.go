@@ -35,7 +35,7 @@ func main() {
 
 // 清除过期的备份日志文件
 func cleanExpiredBackupFiles() {
-    if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
+    if list, err := gfile.ScanDir(logPath, "*.log, *.bz2", true); err == nil {
         for _, path := range list {
             if gfile.IsFile(path) && gtime.Second() - gfile.MTime(path) >= int64(expire * 86400) {
                 if err := gfile.Remove(path); err != nil {

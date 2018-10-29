@@ -257,11 +257,15 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
     }()
     pkg := &Package{}
     if err = gjson.DecodeTo(kafkaMsg.Value, pkg); err == nil {
-        buffer := bytes.NewBuffer(nil)
+        msgBuffer := bytes.NewBuffer(nil)
         if pkg.Total > 1 {
             if pkg.Seq < pkg.Total {
-                pkgCache.Set(fmt.Sprintf("%d-%d", pkg.Id, pkg.Seq), pkg.Msg, 60000)
-                //glog.Debugfln("cache pkg: %d, seq: %d, total: %d", pkg.Id, pkg.Seq, pkg.Total)
+                key := fmt.Sprintf("%d-%d", pkg.Id, pkg.Seq)
+                if pkgCache.Contains(key) {
+                    glog.Debugfln("pkg already received: %d, seq: %d, total: %d", pkg.Id, pkg.Seq, pkg.Total)
+                } else {
+                    pkgCache.Set(key, pkg.Msg, 60000)
+                }
                 return nil
             } else {
                 start := gtime.Second()
@@ -269,45 +273,54 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
                     if gtime.Second() - start > 60 {
                         return errors.New(fmt.Sprintf("incomplete package found: %d", pkg.Id))
                     }
-                    for i := 1; i < pkg.Total; i++ {
-                        if v := pkgCache.Get(fmt.Sprintf("%d-%d", pkg.Id, i)); v != nil {
-                            buffer.Write(v.([]byte))
-                        } else {
-                            //glog.Debugfln("incomplete pkg: %d, seq: %d, total: %d, missing: %d", pkg.Id, pkg.Seq, pkg.Total, i)
-                            break
-                        }
-                        if i == pkg.Total - 1 {
-                            // 使用完毕后清理分包缓存，防止内存占用
-                            for i := 1; i < pkg.Total; i++ {
-                                pkgCache.Remove(fmt.Sprintf("%d-%d", pkg.Id, i))
-                            }
-                            //glog.Debugfln("remove pkg cache: %d", pkg.Id)
-                            buffer.Write(pkg.Msg)
+                    // 当重新进入循环后需要清除之前的msgBuffer
+                    msgBuffer.Reset()
+                    for i := 1; i <= pkg.Total; i++ {
+                        // 最后一条消息没有写缓存，这里直接write
+                        if i == pkg.Total {
+                            msgBuffer.Write(pkg.Msg)
                             goto MsgHandle
+                        } else if v := pkgCache.Get(fmt.Sprintf("%d-%d", pkg.Id, i)); v != nil {
+                            msgBuffer.Write(v.([]byte))
+                        } else {
+                            //glog.Debugfln("waiting for pkg to complete: %d, seq: %d, total: %d", pkg.Id, pkg.Seq, pkg.Total)
+                            break
                         }
                     }
                     // 如果包不完整，等待1秒后重试，最长等待1分钟
                     time.Sleep(time.Second)
                 }
             }
+        } else if pkg.Total == 1 {
+            msgBuffer.Write(pkg.Msg)
         } else {
-            buffer.Write(pkg.Msg)
+            return errors.New(fmt.Sprintf("invalid package: %s", string(kafkaMsg.Value)))
         }
 
 MsgHandle:
         msg := &Message{}
-        if err = gjson.DecodeTo(buffer.Bytes(), msg); err != nil {
+        if err = gjson.DecodeTo(msgBuffer.Bytes(), msg); err != nil {
+            glog.Println(pkg.Id, ":", msgBuffer.String())
+            for i := 1; i < pkg.Total; i++ {
+                glog.Println(pkg.Id, i, ":", string(pkgCache.Get(fmt.Sprintf("%d-%d", pkg.Id, i)).([]byte)))
+            }
+            glog.Println(pkg.Id, pkg.Seq, ":", string(pkg.Msg))
             glog.Error(err)
         }
         // 使用内存锁保证同一时刻只有一个goroutine在操作buffer
         gmlock.Lock(msg.Path)
-        buffer = bufferMap.GetOrSetFuncLock(msg.Path, func() interface{} {
+        contentBuffer := bufferMap.GetOrSetFuncLock(msg.Path, func() interface{} {
             return bytes.NewBuffer(nil)
         }).(*bytes.Buffer)
         for _, v := range msg.Msgs {
-            buffer.WriteString(fmt.Sprintf("%s [%s]\n", strings.TrimRight(v, "\r\n"), msg.Host))
+            contentBuffer.WriteString(fmt.Sprintf("%s [%s]\n", strings.TrimRight(v, "\r\n"), msg.Host))
         }
         gmlock.Unlock(msg.Path)
+
+        // 使用完毕后清理分包缓存，防止内存占用
+        for i := 1; i < pkg.Total; i++ {
+            pkgCache.Remove(fmt.Sprintf("%d-%d", pkg.Id, i))
+        }
     } else {
         glog.Error(err)
     }
