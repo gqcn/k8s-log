@@ -1,8 +1,8 @@
-// 容器日志搜集客户端，参考方案说明：http://gitlab.dev.okapp.cc:81/foundations/inaction/blob/master/实施/1.2、日志搜集/日志搜集改进.MD
-// 1、监控指定目录下的日志文件，记录文件偏移量变化；
+// 容器日志搜集客户端.
+// 1、监控指定目录下的日志文件，记录文件偏移量变化并持久化存储；
 // 2、搜集日志文件内容，并批量提交到Kafka；
 // 3、按照既定规则清理日志文件；
-// 4、每个小时定时执行清理；
+// 4、每天凌晨03:00定时执行清理逻辑；
 
 package main
 
@@ -10,13 +10,11 @@ import (
     "bytes"
     "gitee.com/johng/gf/g/container/gmap"
     "gitee.com/johng/gf/g/container/gset"
-    "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/os/gcron"
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/glog"
-    "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/util/gregex"
     "os"
@@ -107,7 +105,6 @@ func initOffsetMap() {
             for k, v := range j.ToMap(){
                 glog.Debug("init file offset:", k, gconv.Int(v))
                 offsetMapCache.Set(k, gconv.Int(v))
-                offsetMapSave.Set(k, gconv.Int(v))
             }
         } else {
             glog.Error(err)
@@ -133,14 +130,20 @@ func trackLogFile(path string) {
     if !offsetMapCache.Contains(path) {
         offsetMapCache.Set(path, 0)
     }
-    if !offsetMapSave.Contains(path) {
-        offsetMapSave.Set(path, 0)
-    }
     glog.Println("add log file track:", path)
+    size    := 0
+    tracked := false
     for {
         // 每隔1秒钟检查文件变化(不采用fsnotify通知机制)
         time.Sleep(time.Second)
-        if size := int(gfile.Size(path)); size != 0 && size > offsetMapCache.Get(path) {
+        // tracked用于表示path真实加入跟踪了，
+        // 这个时候size应当比offset大，否则表示该文件被外部改变了大小，这时应当重置offset
+        size = int(gfile.Size(path))
+        if tracked && size < offsetMapCache.Get(path) {
+            offsetMapCache.Set(path, 0)
+        }
+        if size != 0 && size > offsetMapCache.Get(path) {
+            tracked  = true
             msgs    := make([]string, 0)
             buffer  := bytes.NewBuffer(nil)
             msgSize := 0
@@ -185,111 +188,3 @@ func trackLogFile(path string) {
     }
 }
 
-// 自动清理日志文件
-func cleanLogCron() {
-    if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
-        for _, path := range list {
-            if !gfile.IsFile(path) || gfile.Size(path) < cleanMinSize {
-                continue
-            }
-            if gtime.Second() - gfile.MTime(path) > bufferTime {
-                // 一定内没有任何更新操作，则truncate
-                glog.Debug("truncate expired file:", path)
-                if err := gfile.Truncate(path, 0); err == nil {
-                    offsetMapCache.Remove(path)
-                    offsetMapSave.Remove(path)
-                } else {
-                    glog.Error(err)
-                }
-            } else {
-                // 判断文件大小，超过指定大小则truncate
-                if gfile.Size(path) > cleanMaxSize {
-                    glog.Debug("truncate size-exceeded file:", path)
-                    if err := gfile.Truncate(path, 0); err == nil {
-                        offsetMapCache.Remove(path)
-                        offsetMapSave.Remove(path)
-                    } else {
-                        glog.Error(err)
-                    }
-                } else {
-                    glog.Debug("leave alone file:", path)
-                }
-            }
-        }
-    } else {
-        glog.Error(err)
-    }
-}
-
-// 定时保存日志文件的offset记录到文件中
-func saveOffsetCron() {
-    if offsetMapSave.Size() == 0 {
-        return
-    }
-    if content, err := gjson.Encode(offsetMapSave.Clone()); err != nil {
-        glog.Error(err)
-    } else {
-        if err := gfile.PutBinContents(offsetFilePath, content); err != nil {
-            glog.Error(err)
-        }
-    }
-}
-
-// 创建kafka生产客户端
-func newKafkaClientProducer() *gkafka.Client {
-    if kafkaAddr == "" || kafkaTopic == "" {
-       panic("incomplete kafka settings")
-    }
-    kafkaConfig               := gkafka.NewConfig()
-    kafkaConfig.Servers        = kafkaAddr
-    kafkaConfig.Topics         = kafkaTopic
-    return gkafka.NewClient(kafkaConfig)
-}
-
-// 向kafka发送日志内容(异步)
-// 如果发送失败，那么每隔1秒阻塞重试
-func sendToKafka(path string, msgs []string, offset int64) {
-    defer offsetMapSave.Set(path, int(offset) + 1)
-    msg := Message{
-        Path : path,
-        Msgs : msgs,
-        Time : gtime.Now().String(),
-        Host : hostname,
-    }
-    for {
-        if msgBytes, err := gjson.Encode(msg); err != nil {
-            glog.Error(err)
-        } else {
-            id    := gtime.Nanosecond()
-            total := int(len(msgBytes)/sendMaxSize) + 1
-            // 如果消息超过限制的大小，那么进行拆包
-            for seq := 1; seq <= total; seq++ {
-                pkg := Package {
-                    Id    : id,
-                    Seq   : seq,
-                    Total : total,
-                }
-                pos := (seq - 1)*sendMaxSize
-                if seq == total {
-                    pkg.Msg = msgBytes[pos : ]
-                } else {
-                    pkg.Msg = msgBytes[pos : pos + sendMaxSize]
-                }
-                for {
-                    if pkgBytes, err := gjson.Encode(pkg); err != nil {
-                        glog.Error(err)
-                    } else {
-                        glog.Debug("send to kafka:", kafkaTopic, path, len(msgBytes), pos, pos + sendMaxSize)
-                        if err := kafkaProducer.SyncSend(&gkafka.Message{Value : pkgBytes}); err != nil {
-                           glog.Error(err)
-                        } else {
-                           break
-                        }
-                        time.Sleep(time.Second)
-                    }
-                }
-            }
-            break
-        }
-    }
-}

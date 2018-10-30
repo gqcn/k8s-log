@@ -1,8 +1,6 @@
-// 日志解析器.
+// 业务日志解析器.
 // 1. 为兼容多种应用端的日志格式，这里划分的日志数据格式粒度比较大，并且很灵活；
 // 2. 将kafka中的消息按照自定义的规则处理后转储到ElasticSearch中；
-// Usage:
-// ./log-analyzer --es-url=http://127.0.0.1:9200 --kafka-addr=127.0.0.1:9092 --kafka-topic=test
 
 package main
 
