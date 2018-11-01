@@ -23,6 +23,9 @@ func newKafkaClient(topic ... string) *gkafka.Client {
     kafkaConfig.Servers        = kafkaAddr
     kafkaConfig.AutoMarkOffset = false
     kafkaConfig.GroupId        = KAFKA_GROUP_NAME
+    if dryrun {
+        kafkaConfig.GroupId = KAFKA_GROUP_NAME_DRYRUN
+    }
     if len(topic) > 0 {
         kafkaConfig.Topics = topic[0]
     }

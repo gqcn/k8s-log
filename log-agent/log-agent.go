@@ -139,8 +139,10 @@ func trackLogFile(path string) {
         // tracked用于表示path真实加入跟踪了，
         // 这个时候size应当比offset大，否则表示该文件被外部改变了大小，这时应当重置offset
         size = int(gfile.Size(path))
-        if tracked && size < offsetMapCache.Get(path) {
+        if tracked && size < offsetMapCache.Get(path) - 1 {
+            glog.Debugfln(`%s size %d < %d (save offset: %d), reset cache offset`, path, size, offsetMapCache.Get(path), offsetMapSave.Get(path))
             offsetMapCache.Set(path, 0)
+            tracked = false
         }
         if size != 0 && size > offsetMapCache.Get(path) {
             tracked  = true
@@ -154,11 +156,19 @@ func trackLogFile(path string) {
                     offset = pos
                     if buffer.Len() > 0 {
                         // 判断是否多行日志数据，通过正则判断日志行首规则
-                        if !gregex.IsMatch(`^\[\D+|^\[\d{4,}|^\d{4,}|^\d+\.|^time=`, content) {
+                        /*
+                        标准规范格式：2018-08-08 13:01:55 DEBUG xxx
+                        med3-srv-error.log: [INFO] 2018-06-20 14:09:20 xxx
+                        med-search.log: [2018-05-24 16:10:20] product.ERROR: xxx
+                        quiz-go.log: time="2018-06-20T14:13:11+08:00" level=info msg="xxx"
+                        yilian-shop-crm.log: [2018-06-20 14:10:14]  [2.85ms] xxx
+                        nginx.log: 10.26.113.161 - - [2018-06-20T10:59:59+08:00] "POST xxx"
+                         */
+                        if !gregex.IsMatch(`^\[[A-Za-z]+|^\[\d{4,}|^\d{4,}|^(\d+\.\d+\.\d+\.\d+)|^time=`, content) {
                             buffer.Write(content)
                         } else {
                             if msgSize  + len(content) > sendMaxSize {
-                                sendToKafka(path, msgs, pos)
+                                sendToKafka(path, msgs, offset)
                                 msgs    = make([]string, 0)
                                 msgSize = 0
                             }
@@ -170,7 +180,7 @@ func trackLogFile(path string) {
                     } else {
                         buffer.Write(content)
                     }
-                    offsetMapCache.Set(path, int(pos) + 1)
+                    offsetMapCache.Set(path, int(offset) + 1)
                 } else {
                     if buffer.Len() > 0 {
                         msgs     = append(msgs, buffer.String())

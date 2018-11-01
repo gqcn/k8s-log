@@ -24,14 +24,18 @@ import (
 )
 
 const (
-    LOG_PATH                    = "/var/log/medlinker"  // 日志目录
-    TOPIC_AUTO_CHECK_INTERVAL   = 10                    // (秒)kafka topic检测时间间隔
-    KAFKA_MSG_HANDLER_NUM       = "100"                 // 并发的kafka消息消费goroutine数量
-    KAFKA_MSG_SAVE_INTERVAL     = "5"                   // (秒) kafka消息内容批量保存间隔
-    KAFKA_OFFSETS_DIR_NAME      = "__backupper_offsets" // 用于保存应用端offsets的目录名称
-    KAFKA_GROUP_NAME            = "group_log_archiver"  // kafka消费端分组名称
-    BUFFER_TIME                 = "60"                  // (秒)缓冲区缓存日志的长度(按照时间衡量)
-    DEBUG                       = "true"                // 默认值，是否打开调试信息
+    LOG_PATH                    = "/var/log/medlinker"         // 日志目录
+    TOPIC_AUTO_CHECK_INTERVAL   = 10                           // (秒)kafka topic检测时间间隔
+    KAFKA_MSG_HANDLER_NUM       = "100"                        // 并发的kafka消息消费goroutine数量
+    KAFKA_MSG_SAVE_INTERVAL     = "5"                          // (秒) kafka消息内容批量保存间隔
+    KAFKA_OFFSETS_DIR_NAME      = "__backupper_offsets"        // 用于保存应用端offsets的目录名称
+    KAFKA_GROUP_NAME            = "group_log_archiver"         // kafka消费端分组名称
+    KAFKA_GROUP_NAME_DRYRUN     = "group_log_archiver_dryrun"  // kafka消费端分组名称(dryrun)
+    MAX_BUFFER_TIME_PERFILE     = "60"                         // (秒)缓冲区缓存日志的长度(按照时间衡量)
+    MAX_BUFFER_LENGTH_PERFILE   = "100000"                     // 缓存区日志的容量限制，当达到容量时阻塞等待日志写入后再往缓冲区添加日志
+    DRYRUN                      = "false"                      // 测试运行，不真实写入文件
+    DEBUG                       = "true"                       // 默认值，是否打开调试信息
+
 )
 
 // kafka消息包
@@ -55,10 +59,12 @@ var (
     handlerChan    = make(chan struct{}, handlerSize)
     bufferMap      = gmap.NewStringInterfaceMap()
     topicMap       = gmap.NewStringInterfaceMap()
+    dryrun         = gconv.Bool(genv.Get("DRYRUN", DRYRUN))
     debug          = gconv.Bool(genv.Get("DEBUG", DEBUG))
     handlerSize    = gconv.Int(genv.Get("HANDLER_SIZE", KAFKA_MSG_HANDLER_NUM))
     saveInterval   = gconv.Int(genv.Get("SAVE_INTERVAL", KAFKA_MSG_SAVE_INTERVAL))
-    bufferTime     = gconv.Int64(genv.Get("BUFFER_TIME", BUFFER_TIME))
+    bufferTime     = gconv.Int64(genv.Get("MAX_BUFFER_TIME_PERFILE", MAX_BUFFER_TIME_PERFILE))
+    bufferLength   = gconv.Int(genv.Get("MAX_BUFFER_LENGTH_PERFILE", MAX_BUFFER_LENGTH_PERFILE))
     kafkaAddr      = genv.Get("KAFKA_ADDR")
     kafkaClient    = newKafkaClient()
     pkgCache       = gcache.New()

@@ -52,7 +52,11 @@ func sendToKafka(path string, msgs []string, offset int64) {
                     if pkgBytes, err := gjson.Encode(pkg); err != nil {
                         glog.Error(err)
                     } else {
-                        glog.Debug("send to kafka:", kafkaTopic, path, len(msgBytes), pos, pos + len(pkg.Msg))
+                        start := offsetMapSave.Get(path)
+                        if start > int(offset) {
+                            start = 0
+                        }
+                        glog.Debugfln("%s %s,\t%d to %d,\t%d[%d:%d]", kafkaTopic, path, start, offset, len(msgBytes), pos, pos + len(pkg.Msg))
                         if err := kafkaProducer.SyncSend(&gkafka.Message{Value : pkgBytes}); err != nil {
                             glog.Error(err)
                         } else {

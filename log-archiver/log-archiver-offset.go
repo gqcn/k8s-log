@@ -21,6 +21,9 @@ func initOffsetMap(topic string, offsetMap *gmap.StringIntMap) {
 
 // 应用自定义保存当前kafka读取的offset
 func dumpOffsetMap(offsetMap *gmap.StringIntMap) {
+    if dryrun {
+        return
+    }
     offsetMap.RLockFunc(func(m map[string]int) {
         for k, v := range m {
             if v == 0 {
