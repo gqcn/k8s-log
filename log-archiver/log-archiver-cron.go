@@ -15,9 +15,16 @@ import (
 
 // 异步批量保存日志
 func handlerSavingContent() {
+    path  := ""
+    array := (*garray.SortedArray)(nil)
+    defer func() {
+        if err := recover(); err != nil {
+            glog.Errorfln(`%s, array length: %d, err: %v`, path, array.Len(), err)
+        }
+    }()
     // 批量写日志
-    for _, path := range bufferMap.Keys() {
-        array  := bufferMap.Get(path).(*garray.SortedArray)
+    for _, path = range bufferMap.Keys() {
+        array = bufferMap.Get(path).(*garray.SortedArray)
         if array.Len() > 0 {
             //glog.Debugfln("%s array: %d", path, array.Len())
             buffer := bytes.NewBuffer(nil)

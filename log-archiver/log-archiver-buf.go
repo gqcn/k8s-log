@@ -35,8 +35,8 @@ func addToBufferArray(msg *Message) {
 
     // 判断缓冲区阈值
     for array.Len() > bufferLength {
-        glog.Debugfln(`%s exceeds max buffer length: %d > %d, waiting..`, msg.Path, array.Len(), bufferLength)
-        time.Sleep(time.Duration(saveInterval)*time.Second)
+        //glog.Debugfln(`%s exceeds max buffer length: %d > %d, waiting..`, msg.Path, array.Len(), bufferLength)
+        time.Sleep(time.Second)
     }
 
     for _, v := range msg.Msgs {
