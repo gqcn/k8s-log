@@ -15,54 +15,51 @@ import (
 
 // 异步批量保存日志
 func handlerSavingContent() {
-    path  := ""
-    array := (*garray.SortedArray)(nil)
-    defer func() {
-        if err := recover(); err != nil {
-            glog.Errorfln(`%s, array length: %d, err: %v`, path, array.Len(), err)
-        }
-    }()
     // 批量写日志
-    for _, path = range bufferMap.Keys() {
-        array = bufferMap.Get(path).(*garray.SortedArray)
-        if array.Len() > 0 {
-            //glog.Debugfln("%s array: %d", path, array.Len())
-            buffer := bytes.NewBuffer(nil)
-            mtime  := gtime.Millisecond() - bufferTime*1000
-            for i := 0; i < array.Len(); i++ {
-                item := array.Get(0).(*bufferItem)
-                // 超过缓冲区时间则写入文件
-                if item.mtime <= mtime {
-                    //glog.Debugfln(`%s : item.mtime(%d) <= mtime(%d)`, path, item.mtime, mtime)
-                    buffer.WriteString(item.content)
-                    array.Remove(0)
-                    if dryrun {
-                        //glog.Debugfln(`%s item: %s`, path, gtime.NewFromTimeStamp(item.mtime).String())
-                    }
-                } else {
-                    //glog.Debugfln(`%s : item.mtime(%d) > mtime(%d)`, path, item.mtime, mtime)
-                    break
+    for _, key := range bufferMap.Keys() {
+        go func(path string) {
+            array  := bufferMap.Get(path).(*garray.SortedArray)
+            length := array.Len()
+            defer func() {
+                if err := recover(); err != nil {
+                    glog.Errorfln(`%s, array length: %d -> %d, err: %v`, path, length, array.Len(), err)
                 }
-            }
-            for buffer.Len() > 0 {
-                if dryrun {
-                    glog.Debugfln("%s writes: %d, array left: %d", path, buffer.Len(), array.Len())
-                    buffer.Reset()
-                    break
-                } else {
-                    if err := gfile.PutBinContentsAppend(path, buffer.Bytes()); err != nil {
-                        // 如果日志写失败，等待1秒后继续
-                        glog.Error(err)
-                        time.Sleep(time.Second)
+            }()
+            if array.Len() > 0 {
+                buffer := bytes.NewBuffer(nil)
+                mtime  := gtime.Millisecond() - bufferTime*1000
+                for array.Len() > 0 {
+                    item := array.Get(0).(*bufferItem)
+                    // 超过缓冲区时间则写入文件
+                    if item.mtime <= mtime {
+                        buffer.WriteString(item.content)
+                        array.Remove(0)
+                        if dryrun {
+                            glog.Debugfln(`%s item: %s`, path, gtime.NewFromTimeStamp(item.mtime).String())
+                        }
                     } else {
-                        glog.Debugfln("%s writes: %d bytes, array left: %d items", path, buffer.Len(), array.Len())
-                        buffer.Reset()
                         break
                     }
                 }
-
+                for buffer.Len() > 0 {
+                    if dryrun {
+                        glog.Debugfln("%s writes: %d, array left: %d", path, buffer.Len(), array.Len())
+                        buffer.Reset()
+                        break
+                    } else {
+                        if err := gfile.PutBinContentsAppend(path, buffer.Bytes()); err != nil {
+                            // 如果日志写失败，等待1秒后继续
+                            glog.Error(err)
+                            time.Sleep(time.Second)
+                        } else {
+                            glog.Debugfln("%s writes: %d bytes, array left: %d items", path, buffer.Len(), array.Len())
+                            buffer.Reset()
+                            break
+                        }
+                    }
+                }
             }
-        }
+        }(key)
     }
 
     // 导出topic offset到磁盘保存
