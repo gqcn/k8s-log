@@ -33,7 +33,7 @@ func newKafkaClient(topic ... string) *gkafka.Client {
 }
 
 
-// 异步处理topic日志
+// 异步处理topic日志内容
 func handlerKafkaTopic(topic string) {
     kafkaClient := newKafkaClient(topic)
     defer func() {
@@ -65,9 +65,7 @@ func handlerKafkaTopic(topic string) {
             }
             handlerChan <- struct{}{}
             go func() {
-                if handlerKafkaMessage(msg) == nil {
-                    offsetMap.Set(key, msg.Offset)
-                }
+                handlerKafkaMessage(msg)
                 <- handlerChan
             }()
         } else {
@@ -138,7 +136,7 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
             glog.Println(pkg.Id, pkg.Seq, ":", string(pkg.Msg))
             glog.Error(err)
         }
-        addToBufferArray(msg)
+        addToBufferArray(msg, kafkaMsg)
         // 使用完毕后清理分包缓存，防止内存占用
         for i := 1; i < pkg.Total; i++ {
             pkgCache.Remove(fmt.Sprintf("%d-%d", pkg.Id, i))

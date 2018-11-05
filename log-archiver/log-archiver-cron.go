@@ -7,6 +7,7 @@ import (
     "gitee.com/johng/gf/g/container/gmap"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/os/glog"
+    "gitee.com/johng/gf/g/os/gmlock"
     "gitee.com/johng/gf/g/os/gproc"
     "gitee.com/johng/gf/g/os/gtime"
     "os"
@@ -16,22 +17,35 @@ import (
 // 异步批量保存日志
 func handlerSavingContent() {
     // 批量写日志
-    for _, key := range bufferMap.Keys() {
+    keys := bufferMap.Keys()
+    for _, key := range keys {
         go func(path string) {
-            array  := bufferMap.Get(path).(*garray.SortedArray)
-            length := array.Len()
-            defer func() {
-                if err := recover(); err != nil {
-                    glog.Errorfln(`%s, array length: %d -> %d, err: %v`, path, length, array.Len(), err)
-                }
-            }()
+            // 同时只允许一个该文件的写入任务存在
+            if gmlock.TryLock(path) {
+                defer gmlock.Unlock(path)
+            } else {
+                glog.Info(path, "is already saving...")
+                return
+            }
+            array := bufferMap.Get(path).(*garray.SortedArray)
             if array.Len() > 0 {
-                buffer := bytes.NewBuffer(nil)
-                mtime  := gtime.Millisecond() - bufferTime*1000
-                for array.Len() > 0 {
+                minTime := int64(0)
+                maxTime := int64(0)
+                if array.Len() > 0 {
+                    minTime = array.Get(0).(*bufferItem).mtime
+                    maxTime = array.Get(array.Len() - 1).(*bufferItem).mtime
+                }
+                buffer       := bytes.NewBuffer(nil)
+                tmpOffsetMap := gmap.NewStringIntMap(false)
+                for i := 0; i < array.Len(); i++ {
                     item := array.Get(0).(*bufferItem)
                     // 超过缓冲区时间则写入文件
-                    if item.mtime <= mtime {
+                    if maxTime - minTime >= bufferTime*1000 {
+                        // 记录写入的kafka offset
+                        key := buildOffsetKey(item.topic, item.partition)
+                        if item.offset > tmpOffsetMap.Get(key) {
+                            tmpOffsetMap.Set(key, item.offset)
+                        }
                         buffer.WriteString(item.content)
                         array.Remove(0)
                         if dryrun {
@@ -52,7 +66,21 @@ func handlerSavingContent() {
                             glog.Error(err)
                             time.Sleep(time.Second)
                         } else {
-                            glog.Debugfln("%s writes: %d bytes, array left: %d items", path, buffer.Len(), array.Len())
+                            // 真实写入成功之后才写入kafka offset到全局的offset哈希表中，以便磁盘化
+                            if tmpOffsetMap.Size() > 0 {
+                                for key, offset := range tmpOffsetMap.Clone() {
+                                    topic, partition := parseOffsetKey(key)
+                                    if topic != "" {
+                                        setOffsetMap(topic, partition, offset)
+                                    } else {
+                                        glog.Error("cannot parse key:", key)
+                                    }
+                                }
+                            }
+                            glog.Debugfln("%s : %d, %d, %s, %s", path, buffer.Len(), array.Len(),
+                                gtime.NewFromTimeStamp(minTime).Format("Y-m-d H:i:s.u"),
+                                gtime.NewFromTimeStamp(maxTime).Format("Y-m-d H:i:s.u"),
+                            )
                             buffer.Reset()
                             break
                         }
@@ -61,8 +89,10 @@ func handlerSavingContent() {
             }
         }(key)
     }
+}
 
-    // 导出topic offset到磁盘保存
+// 导出topic offset到磁盘保存
+func handlerDumpOffsetMapCron() {
     if !dryrun {
         topicMap.RLockFunc(func(m map[string]interface{}) {
             for _, v := range m {
@@ -71,7 +101,6 @@ func handlerSavingContent() {
         })
     }
 }
-
 
 // 自动归档检查循环，归档使用tar工具实现
 func handlerArchiveCron() {

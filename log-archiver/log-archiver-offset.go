@@ -5,12 +5,13 @@ import (
     "gitee.com/johng/gf/g/container/gmap"
     "gitee.com/johng/gf/g/os/gfile"
     "gitee.com/johng/gf/g/util/gconv"
+    "gitee.com/johng/gf/g/util/gregex"
 )
 
 // 初始化topic offset
 func initOffsetMap(topic string, offsetMap *gmap.StringIntMap) {
     for i := 0; i < 100; i++ {
-        key  := fmt.Sprintf("%s.%d", topic, i)
+        key  := buildOffsetKey(topic, i)
         path := fmt.Sprintf("%s/%s/%s", logPath, KAFKA_OFFSETS_DIR_NAME, key)
         if !gfile.Exists(path) {
             break
@@ -19,9 +20,33 @@ func initOffsetMap(topic string, offsetMap *gmap.StringIntMap) {
     }
 }
 
+// 根据topic和partition生成key
+func buildOffsetKey(topic string, partition int) string {
+    return fmt.Sprintf("%s.%d", topic, partition)
+}
+
+// 从key中解析出topic和partition，是buildOffsetKey的相反操作
+func parseOffsetKey(key string) (topic string, partition int) {
+    match, _ := gregex.MatchString(`(.+)\.(\d+)`, key)
+    if len(match) > 0 {
+        return match[1], gconv.Int(match[2])
+    }
+    return "", 0
+}
+
+// 设置topic offset
+func setOffsetMap(topic string, partition int, offset int) {
+    key := buildOffsetKey(topic, partition)
+    topicMap.RLockFunc(func(m map[string]interface{}) {
+        if r, ok := m[topic]; ok {
+            r.(*gmap.StringIntMap).Set(key, offset)
+        }
+    })
+}
+
 // 应用自定义保存当前kafka读取的offset
 func dumpOffsetMap(offsetMap *gmap.StringIntMap) {
-    if dryrun {
+    if dryrun || offsetMap.Size() == 0 {
         return
     }
     offsetMap.RLockFunc(func(m map[string]int) {

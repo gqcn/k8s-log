@@ -19,7 +19,6 @@ import (
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/util/gconv"
-    "gitee.com/johng/gf/g/util/gregex"
     "time"
 )
 
@@ -80,11 +79,13 @@ func main() {
     // 定时批量写日志到文件
     gcron.Add(fmt.Sprintf(`*/%d * * * * *`, saveInterval), handlerSavingContent)
 
+    // 定时导出已处理的offset map
+    gcron.DelayAdd(10, "* * * * * *", handlerDumpOffsetMapCron)
+
     for {
        if topics, err := kafkaClient.Topics(); err == nil {
           for _, topic := range topics {
-              // 只处理新版处理程序处理 *.v2 的topic
-              if !topicMap.Contains(topic) && gregex.IsMatchString(`.+\.v3`, topic) {
+              if !topicMap.Contains(topic) {
                   glog.Debugfln("add new topic handle: %s", topic)
                   topicMap.Set(topic, gmap.NewStringIntMap())
                   go handlerKafkaTopic(topic)

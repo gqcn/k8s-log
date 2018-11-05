@@ -3,6 +3,7 @@ package main
 import (
     "fmt"
     "gitee.com/johng/gf/g/container/garray"
+    "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/util/gconv"
@@ -13,12 +14,15 @@ import (
 
 // 排序元素项
 type bufferItem struct {
-    mtime   int64  // 毫秒时间戳
-    content string // 日志内容
+    mtime     int64  // 毫秒时间戳
+    content   string // 日志内容
+    offset    int    // kafka offset
+    topic     string // kafka topic
+    partition int    // kafka partition
 }
 
 // 添加日志内容到缓冲区
-func addToBufferArray(msg *Message) {
+func addToBufferArray(msg *Message, kafkaMsg *gkafka.Message) {
     // array是并发安全的
     array := bufferMap.GetOrSetFuncLock(msg.Path, func() interface{} {
         return garray.NewSortedArray(0, func(v1, v2 interface{}) int {
@@ -46,8 +50,11 @@ func addToBufferArray(msg *Message) {
             t = gtime.Now()
         }
         array.Add(&bufferItem {
-            mtime   : t.Millisecond(),
-            content : fmt.Sprintf("%s [%s]\n", strings.TrimRight(v, "\r\n"), msg.Host),
+            mtime     : t.Millisecond(),
+            content   : fmt.Sprintf("%s [%s]\n", strings.TrimRight(v, "\r\n"), msg.Host),
+            topic     : kafkaMsg.Topic,
+            offset    : kafkaMsg.Offset,
+            partition : kafkaMsg.Partition,
         })
     }
 }
