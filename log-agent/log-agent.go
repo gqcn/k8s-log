@@ -14,7 +14,9 @@ import (
     "gitee.com/johng/gf/g/os/gcron"
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/os/gfile"
+    "gitee.com/johng/gf/g/os/gfsnotify"
     "gitee.com/johng/gf/g/os/glog"
+    "gitee.com/johng/gf/g/os/gmlock"
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/util/gregex"
     "os"
@@ -54,7 +56,7 @@ var (
     offsetMapCache = gmap.NewStringIntMap(true)
     // 真实提交成功的offset，用于持久化保存
     offsetMapSave  = gmap.NewStringIntMap(true)
-    handlerSet     = gset.NewStringSet(true)
+    watchedFileSet = gset.NewStringSet(true)
     // 以下为通过环境变量传递的参数
     logPath        = genv.Get("LOG_PATH", LOG_PATH)
     offsetFilePath = genv.Get("OFFSET_FILE_PATH", OFFSET_FILE_PATH)
@@ -87,7 +89,23 @@ func main() {
         if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
             for _, path := range list {
                 if gfile.IsFile(path) && gfile.Ext(path) != ".offsets" {
-                    go trackLogFile(path)
+                    if !watchedFileSet.Contains(path) {
+                        watchedFileSet.Add(path)
+                        glog.Println("add log file track:", path)
+                        gfsnotify.Add(path, func(event *gfsnotify.Event) {
+                            glog.Debugfln(event.String())
+                            // 如果日志文件被删除或者重命名，移除监听及记录，以便重新添加监听
+                            if event.IsRename() || event.IsRemove() {
+                                watchedFileSet.Remove(event.Path)
+                                offsetMapCache.Remove(event.Path)
+                                gfsnotify.Remove(event.Path)
+                                return
+                            }
+                            checkLogFile(event.Path)
+                        })
+                        // 第一次添加后需要执行一次内容搜集(不然需要等待下一次文件写入时才开始搜集已有的内容)
+                        checkLogFile(path)
+                    }
                 }
             }
         } else {
@@ -112,89 +130,61 @@ func initOffsetMap() {
     }
 }
 
-// 执行对指定日志文件的搜集监听
-func trackLogFile(path string) {
-    // 日志文件大于0才开始执行监听
-    if gfile.Size(path) == 0 {
+// 检查文件变化，并将变化的内容提交到kafka
+func checkLogFile(path string) {
+    // 使用内存锁保证同一时刻只有一个goroutine在执行同一文件的日志搜集
+    if gmlock.TryLock(path) {
+        defer gmlock.Unlock(path)
+    } else {
         return
     }
-
-    // 判断goroutine是否存在
-    if handlerSet.Contains(path) {
-        return
-    }
-    handlerSet.Add(path)
-    defer handlerSet.Remove(path)
-
-    // offset初始化
-    if !offsetMapCache.Contains(path) {
-        offsetMapCache.Set(path, 0)
-    }
-    glog.Println("add log file track:", path)
-    size    := 0
-    tracked := false
+    msgs    := make([]string, 0)
+    buffer  := bytes.NewBuffer(nil)
+    msgSize := 0
+    offset  := int64(0)
     for {
-        // 每隔1秒钟检查文件变化(不采用fsnotify通知机制)
-        time.Sleep(time.Second)
-        // tracked用于表示path真实加入跟踪了，
-        // 这个时候size应当比offset大，否则表示该文件被外部改变了大小，这时应当重置offset
-        size = int(gfile.Size(path))
-        if tracked && size < offsetMapCache.Get(path) - 1 {
-            glog.Debugfln(`%s size %d < %d (save offset: %d), reset cache offset`, path, size, offsetMapCache.Get(path), offsetMapSave.Get(path))
-            offsetMapCache.Set(path, 0)
-            tracked = false
-        }
-        if size != 0 && size > offsetMapCache.Get(path) {
-            tracked  = true
-            msgs    := make([]string, 0)
-            buffer  := bytes.NewBuffer(nil)
-            msgSize := 0
-            offset  := int64(0)
-            for {
-                content, pos := gfile.GetBinContentsTilCharByPath(path, '\n', int64(offsetMapCache.Get(path)))
-                if pos > 0 {
-                    offset = pos
-                    if buffer.Len() > 0 {
-                        // 判断是否多行日志数据，通过正则判断日志行首规则
-                        /*
-                        标准规范格式：2018-08-08 13:01:55 DEBUG xxx
-                        med3-srv-error.log: [INFO] 2018-06-20 14:09:20 xxx
-                        med-search.log: [2018-05-24 16:10:20] product.ERROR: xxx
-                        quiz-go.log: time="2018-06-20T14:13:11+08:00" level=info msg="xxx"
-                        yilian-shop-crm.log: [2018-06-20 14:10:14]  [2.85ms] xxx
-                        nginx.log: 10.26.113.161 - - [2018-06-20T10:59:59+08:00] "POST xxx"
-                         */
-                        if !gregex.IsMatch(`^\[[A-Za-z]+|^\[\d{4,}|^\d{4,}|^(\d+\.\d+\.\d+\.\d+)|^time=`, content) {
-                            buffer.Write(content)
-                        } else {
-                            if msgSize  + len(content) > sendMaxSize {
-                                sendToKafka(path, msgs, offset)
-                                msgs    = make([]string, 0)
-                                msgSize = 0
-                            }
-                            msgs     = append(msgs, buffer.String())
-                            msgSize += buffer.Len()
-                            buffer.Reset()
-                            buffer.Write(content)
-                        }
-                    } else {
-                        buffer.Write(content)
-                    }
-                    offsetMapCache.Set(path, int(offset) + 1)
+        content, pos := gfile.GetBinContentsTilCharByPath(path, '\n', int64(offsetMapCache.Get(path)))
+        if pos > 0 {
+            offset = pos
+            if buffer.Len() > 0 {
+                /*
+                    判断是否多行日志数据，通过正则判断日志行首规则。
+                    标准规范格式：       2018-08-08 13:01:55 DEBUG xxx
+                    med3-srv-error.log:  [INFO] 2018-06-20 14:09:20 xxx
+                    med-search.log:      [2018-05-24 16:10:20] product.ERROR: xxx
+                    quiz-go.log:         time="2018-06-20T14:13:11+08:00" level=info msg="xxx"
+                    yilian-shop-crm.log: [2018-06-20 14:10:14]  [2.85ms] xxx
+                    nginx.log:           10.26.113.161 - - [2018-06-20T10:59:59+08:00] "POST xxx"
+                 */
+                if !gregex.IsMatch(`^\[[A-Za-z]+|^\[\d{4,}|^\d{4,}|^(\d+\.\d+\.\d+\.\d+)|^time=`, content) {
+                    buffer.Write(content)
                 } else {
-                    if buffer.Len() > 0 {
-                        msgs     = append(msgs, buffer.String())
-                        msgSize += buffer.Len()
-                        buffer.Reset()
+                    if msgSize  + len(content) > sendMaxSize {
+                        sendToKafka(path, msgs, offset)
+                        msgs    = make([]string, 0)
+                        msgSize = 0
                     }
-                    break
+                    msgs     = append(msgs, buffer.String())
+                    msgSize += buffer.Len()
+                    buffer.Reset()
+                    buffer.Write(content)
                 }
+            } else {
+                buffer.Write(content)
             }
-            // 跳出循环后如果有数据则再次执行发送
-            if len(msgs) > 0 {
-                sendToKafka(path, msgs, offset)
+            offsetMapCache.Set(path, int(offset) + 1)
+        } else {
+            if buffer.Len() > 0 {
+                msgs     = append(msgs, buffer.String())
+                msgSize += buffer.Len()
+                buffer.Reset()
             }
+            break
         }
+    }
+    // 跳出循环后如果有数据则再次执行发送
+    if len(msgs) > 0 {
+        sendToKafka(path, msgs, offset)
     }
 }
 
