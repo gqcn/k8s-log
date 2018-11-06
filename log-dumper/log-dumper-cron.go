@@ -33,11 +33,12 @@ func handlerSavingContent() {
                     maxTime = array.Get(array.Len() - 1).(*bufferItem).mtime
                 }
                 buffer       := bytes.NewBuffer(nil)
+                bufferCount  := 0
                 tmpOffsetMap := gmap.NewStringIntMap(false)
                 for i := 0; i < array.Len(); i++ {
                     item := array.Get(0).(*bufferItem)
                     // 超过缓冲区时间则写入文件
-                    if maxTime - minTime >= bufferTime*1000 {
+                    if maxTime - minTime >= bufferTime*1000 && bufferCount < bufferLength {
                         // 记录写入的kafka offset
                         key := buildOffsetKey(item.topic, item.partition)
                         if item.offset > tmpOffsetMap.Get(key) {
@@ -45,44 +46,38 @@ func handlerSavingContent() {
                         }
                         buffer.WriteString(item.content)
                         array.Remove(0)
-                        if dryrun {
-                            glog.Debugfln(`%s item: %s`, path, gtime.NewFromTimeStamp(item.mtime).String())
-                        }
+                        bufferCount++
                     } else {
                         break
                     }
                 }
                 for buffer.Len() > 0 {
-                    if dryrun {
-                        glog.Debugfln("%s writes: %d, array left: %d", path, buffer.Len(), array.Len())
-                        buffer.Reset()
-                        break
+                    if err := gfile.PutBinContentsAppend(path, buffer.Bytes()); err != nil {
+                        // 如果日志写失败，等待1秒后继续
+                        glog.Error(err)
+                        time.Sleep(time.Second)
                     } else {
-                        if err := gfile.PutBinContentsAppend(path, buffer.Bytes()); err != nil {
-                            // 如果日志写失败，等待1秒后继续
-                            glog.Error(err)
-                            time.Sleep(time.Second)
-                        } else {
-                            // 真实写入成功之后才写入kafka offset到全局的offset哈希表中，以便磁盘化
-                            if tmpOffsetMap.Size() > 0 {
-                                for key, offset := range tmpOffsetMap.Clone() {
-                                    topic, partition := parseOffsetKey(key)
-                                    if topic != "" {
-                                        setOffsetMap(topic, partition, offset)
-                                    } else {
-                                        glog.Error("cannot parse key:", key)
-                                    }
+                        // 真实写入成功之后才写入kafka offset到全局的offset哈希表中，以便磁盘化
+                        if tmpOffsetMap.Size() > 0 {
+                            for key, offset := range tmpOffsetMap.Clone() {
+                                topic, partition := parseOffsetKey(key)
+                                if topic != "" {
+                                    setOffsetMap(topic, partition, offset)
+                                } else {
+                                    glog.Error("cannot parse key:", key)
                                 }
                             }
-                            glog.Debugfln("%s : %d, %d, %s, %s", path, buffer.Len(), array.Len(),
-                                gtime.NewFromTimeStamp(minTime).Format("Y-m-d H:i:s.u"),
-                                gtime.NewFromTimeStamp(maxTime).Format("Y-m-d H:i:s.u"),
-                            )
-                            buffer.Reset()
-                            break
                         }
+                        glog.Debugfln("%s : %d, %d, %s, %s", path, buffer.Len(), array.Len(),
+                            gtime.NewFromTimeStamp(minTime).Format("Y-m-d H:i:s.u"),
+                            gtime.NewFromTimeStamp(maxTime).Format("Y-m-d H:i:s.u"),
+                        )
+                        buffer.Reset()
+                        break
                     }
                 }
+            } else {
+                glog.Debugfln("%s empty array", path)
             }
         }(key)
     }
