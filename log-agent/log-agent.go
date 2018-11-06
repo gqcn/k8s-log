@@ -148,7 +148,8 @@ func checkLogFile(path string) {
             offset = pos
             if buffer.Len() > 0 {
                 /*
-                    判断是否多行日志数据，通过正则判断日志行首规则。
+                判断是否多行日志数据，通过正则判断日志行首规则。
+                参考内容：
                     标准规范格式：       2018-08-08 13:01:55 DEBUG xxx
                     med3-srv-error.log:  [INFO] 2018-06-20 14:09:20 xxx
                     med-search.log:      [2018-05-24 16:10:20] product.ERROR: xxx

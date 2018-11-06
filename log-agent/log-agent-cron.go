@@ -3,6 +3,7 @@ package main
 import (
     "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/os/gfile"
+    "gitee.com/johng/gf/g/os/gfsnotify"
     "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/os/gtime"
 )
@@ -15,16 +16,25 @@ func cleanLogCron() {
                 continue
             }
             if gtime.Second() - gfile.MTime(path) > bufferTime {
-                // 一定内没有任何更新操作，则truncate
-                glog.Debug("truncate expired file:", path)
-                if err := gfile.Truncate(path, 0); err == nil {
+                // 一定内没有任何更新操作，如果文件名称带日期则删除，否则truncate
+                err := (error)(nil)
+                if gtime.ParseTimeFromContent(path, "Ymd") != nil || gtime.ParseTimeFromContent(path, "Y-m-d") != nil {
+                    glog.Debug("remove expired file:", path)
+                    err = gfile.Remove(path)
+                } else {
+                    glog.Debug("truncate expired file:", path)
+                    err = gfile.Truncate(path, 0)
+                }
+                if err == nil {
                     offsetMapCache.Remove(path)
                     offsetMapSave.Remove(path)
+                    watchedFileSet.Remove(path)
+                    gfsnotify.Remove(path)
                 } else {
                     glog.Error(err)
                 }
             } else {
-                // 判断文件大小，超过指定大小则truncate
+                // 判断文件大小，超过指定大小则truncate，注意不移除监听
                 if gfile.Size(path) > cleanMaxSize {
                     glog.Debug("truncate size-exceeded file:", path)
                     if err := gfile.Truncate(path, 0); err == nil {
