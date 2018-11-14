@@ -23,9 +23,9 @@ import (
 
 const (
     LOG_PATH                    = "/var/log/medlinker"         // 日志目录
-    TOPIC_AUTO_CHECK_INTERVAL   = 10                           // (秒)kafka topic检测时间间隔
-    KAFKA_MSG_HANDLER_NUM       = "100"                        // 并发的kafka消息消费goroutine数量
-    KAFKA_MSG_SAVE_INTERVAL     = "5"                          // (秒) kafka消息内容批量保存间隔
+    TOPIC_AUTO_CHECK_INTERVAL   = 5                            // (秒)kafka topic检测时间间隔
+    HANDLER_NUM_PER_TOPIC       = "5"                          // 同一个topic消费处理时，允许并发的goroutine数量
+    AUTO_SAVE_INTERVAL          = "5"                          // (秒)日志内容批量保存间隔
     KAFKA_OFFSETS_DIR_NAME      = "__dumper_offsets"           // 用于保存应用端offsets的目录名称
     KAFKA_GROUP_NAME            = "group_log_archiver"         // kafka消费端分组名称
     KAFKA_GROUP_NAME_DRYRUN     = "group_log_archiver_dryrun"  // kafka消费端分组名称(dryrun)
@@ -54,13 +54,12 @@ type Message struct {
 
 var (
     logPath        = genv.Get("LOG_PATH", LOG_PATH)
-    handlerChan    = make(chan struct{}, handlerSize)
     bufferMap      = gmap.NewStringInterfaceMap()
     topicMap       = gmap.NewStringInterfaceMap()
     dryrun         = gconv.Bool(genv.Get("DRYRUN", DRYRUN))
     debug          = gconv.Bool(genv.Get("DEBUG", DEBUG))
-    handlerSize    = gconv.Int(genv.Get("HANDLER_SIZE", KAFKA_MSG_HANDLER_NUM))
-    saveInterval   = gconv.Int(genv.Get("SAVE_INTERVAL", KAFKA_MSG_SAVE_INTERVAL))
+    handlerSize    = gconv.Int(genv.Get("HANDLER_SIZE", HANDLER_NUM_PER_TOPIC))
+    saveInterval   = gconv.Int(genv.Get("SAVE_INTERVAL", AUTO_SAVE_INTERVAL))
     bufferTime     = gconv.Int64(genv.Get("MAX_BUFFER_TIME_PERFILE", MAX_BUFFER_TIME_PERFILE))
     bufferLength   = gconv.Int(genv.Get("MAX_BUFFER_LENGTH_PERFILE", MAX_BUFFER_LENGTH_PERFILE))
     kafkaAddr      = genv.Get("KAFKA_ADDR")

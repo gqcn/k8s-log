@@ -136,6 +136,7 @@ func checkLogFile(path string) {
     if gmlock.TryLock(path) {
         defer gmlock.Unlock(path)
     } else {
+        glog.Debug("mlock:", path)
         return
     }
     msgs    := make([]string, 0)

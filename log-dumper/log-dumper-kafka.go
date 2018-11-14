@@ -55,6 +55,7 @@ func handlerKafkaTopic(topic string) {
             }
         }
     })
+    handlerChan := make(chan struct{}, handlerSize)
     for {
         if msg, err := kafkaClient.Receive(); err == nil {
             // 记录offset

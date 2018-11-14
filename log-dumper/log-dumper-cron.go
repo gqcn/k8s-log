@@ -29,8 +29,9 @@ func handlerSavingContent() {
                 minTime := int64(0)
                 maxTime := int64(0)
                 if array.Len() > 0 {
+                    // 队列最小时间与当前时间的间隔比较(而不是队列两端大小的比较)
                     minTime = array.Get(0).(*bufferItem).mtime
-                    maxTime = array.Get(array.Len() - 1).(*bufferItem).mtime
+                    maxTime = gtime.Millisecond()
                 }
                 buffer       := bytes.NewBuffer(nil)
                 bufferCount  := 0
@@ -45,7 +46,7 @@ func handlerSavingContent() {
                             tmpOffsetMap.Set(key, item.offset)
                         }
                         buffer.WriteString(item.content)
-                        array.Remove(0)
+                        array.PopLeft()
                         bufferCount++
                     } else {
                         break
@@ -68,7 +69,7 @@ func handlerSavingContent() {
                                 }
                             }
                         }
-                        glog.Debugfln("%s : %d, %d, %s, %s", path, buffer.Len(), array.Len(),
+                        glog.Debugfln("%s : %d, %d, %d, %s, %s", path, buffer.Len(), bufferCount, array.Len(),
                             gtime.NewFromTimeStamp(minTime).Format("Y-m-d H:i:s.u"),
                             gtime.NewFromTimeStamp(maxTime).Format("Y-m-d H:i:s.u"),
                         )
@@ -77,7 +78,7 @@ func handlerSavingContent() {
                     }
                 }
             } else {
-                glog.Debugfln("%s empty array", path)
+                //glog.Debugfln("%s empty array", path)
             }
         }(key)
     }
