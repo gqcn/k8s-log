@@ -27,8 +27,8 @@ const (
     HANDLER_NUM_PER_TOPIC       = "5"                          // 同一个topic消费处理时，允许并发的goroutine数量
     AUTO_SAVE_INTERVAL          = "5"                          // (秒)日志内容批量保存间隔
     KAFKA_OFFSETS_DIR_NAME      = "__dumper_offsets"           // 用于保存应用端offsets的目录名称
-    KAFKA_GROUP_NAME            = "group_log_archiver"         // kafka消费端分组名称
-    KAFKA_GROUP_NAME_DRYRUN     = "group_log_archiver_dryrun"  // kafka消费端分组名称(dryrun)
+    KAFKA_GROUP_NAME            = "group_log_dumper"           // kafka消费端分组名称
+    KAFKA_GROUP_NAME_DRYRUN     = "group_log_dumper_dryrun"    // kafka消费端分组名称(dryrun)
     MAX_BUFFER_TIME_PERFILE     = "60"                         // (秒)缓冲区缓存日志的长度(按照时间衡量)
     MAX_BUFFER_LENGTH_PERFILE   = "100000"                     // 缓存区日志的容量限制，当达到容量时阻塞等待日志写入后再往缓冲区添加日志
     DRYRUN                      = "false"                      // 测试运行，不真实写入文件

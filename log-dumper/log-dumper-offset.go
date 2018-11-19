@@ -8,11 +8,16 @@ import (
     "gitee.com/johng/gf/g/util/gregex"
 )
 
+// 生成kafka消费offset文件路径
+func offsetFilePath(offsetKey string) string {
+    return fmt.Sprintf("%s/%s/%s.offset", logPath, KAFKA_OFFSETS_DIR_NAME, offsetKey)
+}
+
 // 初始化topic offset
 func initOffsetMap(topic string, offsetMap *gmap.StringIntMap) {
     for i := 0; i < 100; i++ {
         key  := buildOffsetKey(topic, i)
-        path := fmt.Sprintf("%s/%s/%s", logPath, KAFKA_OFFSETS_DIR_NAME, key)
+        path := offsetFilePath(key)
         if !gfile.Exists(path) {
             break
         }
@@ -50,13 +55,11 @@ func dumpOffsetMap(offsetMap *gmap.StringIntMap) {
         return
     }
     offsetMap.RLockFunc(func(m map[string]int) {
-        for k, v := range m {
-            if v == 0 {
+        for key, offset := range m {
+            if offset == 0 {
                 continue
             }
-            path    := fmt.Sprintf("%s/%s/%s", logPath, KAFKA_OFFSETS_DIR_NAME, k)
-            content := gconv.String(v)
-            gfile.PutContents(path, content)
+            gfile.PutContents(offsetFilePath(key), gconv.String(offset))
         }
     })
 }
