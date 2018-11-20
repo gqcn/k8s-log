@@ -43,7 +43,8 @@ func addToBufferArray(msg *Message, kafkaMsg *gkafka.Message) {
         time.Sleep(time.Second)
     }
 
-    for _, v := range msg.Msgs {
+    i := gtime.Nanosecond()
+    for k, v := range msg.Msgs {
         t := getTimeFromContent(v)
         if t == nil || t.IsZero() {
             glog.Debugfln(`cannot parse time from [%s] %s: %s`, msg.Host, msg.Path, v)
@@ -56,6 +57,7 @@ func addToBufferArray(msg *Message, kafkaMsg *gkafka.Message) {
             offset    : kafkaMsg.Offset,
             partition : kafkaMsg.Partition,
         })
+        glog.Debug("addToBufferArray:", msg.Path, k, len(msg.Msgs))
     }
 }
 
