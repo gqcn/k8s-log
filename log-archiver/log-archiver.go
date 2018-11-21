@@ -43,8 +43,8 @@ func main() {
 func handlerArchiveCron() {
     paths, _ := gfile.ScanDir(logPath, "*", true)
     for _, path := range paths {
-        // 不处理目录及kafka offset文件
-        if gfile.IsDir(path) || gfile.Ext(path) == ".offset" {
+        // 不处理目录、kafka offset文件、已经压缩过的文件
+        if gfile.IsDir(path) || gfile.Ext(path) == ".offset" || gfile.Ext(path) == ".bz2" {
             continue
         }
         size := gfile.Size(path)
