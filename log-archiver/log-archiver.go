@@ -18,7 +18,7 @@ const (
     LOG_PATH  = "/var/log/medlinker" // 日志目录
     EXPIRE    = "30"                 // 过期时间(天)
     MAX_BYTES = "10240"              // 单文件最大大小限制(MB)
-    DEBUG    = "true"                // 默认值，是否打开调试信息
+    DEBUG     = "true"                // 默认值，是否打开调试信息
 )
 
 var (
