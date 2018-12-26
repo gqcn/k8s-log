@@ -85,6 +85,7 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
             kafkaMsg.MarkOffset()
         }
     }()
+    // 重新组织path
     pkg := &Package{}
     if err = gjson.DecodeTo(kafkaMsg.Value, pkg); err == nil {
         msgBuffer := bytes.NewBuffer(nil)
@@ -137,6 +138,8 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
             glog.Println(pkg.Id, pkg.Seq, ":", string(pkg.Msg))
             glog.Error(err)
         }
+        // 重新组织path
+        msg.Path, _ = gregex.ReplaceString(`.+kubernetes\.io~empty\-dir/log.*?/`, LOG_PATH + "/", msg.Path)
         addToBufferArray(msg, kafkaMsg)
         // 使用完毕后清理分包缓存，防止内存占用
         for i := 1; i < pkg.Total; i++ {

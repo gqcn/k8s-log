@@ -1,14 +1,11 @@
 package main
 
 import (
-    "fmt"
     "gitee.com/johng/gf/g/container/garray"
     "gitee.com/johng/gf/g/database/gkafka"
-    "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/os/gtime"
     "gitee.com/johng/gf/g/util/gconv"
     "gitee.com/johng/gf/g/util/gstr"
-    "strings"
     "time"
 )
 
@@ -43,21 +40,20 @@ func addToBufferArray(msg *Message, kafkaMsg *gkafka.Message) {
         time.Sleep(time.Second)
     }
 
-    i := gtime.Nanosecond()
-    for k, v := range msg.Msgs {
+    for _, v := range msg.Msgs {
         t := getTimeFromContent(v)
         if t == nil || t.IsZero() {
-            glog.Debugfln(`cannot parse time from [%s] %s: %s`, msg.Host, msg.Path, v)
+            //glog.Debugfln(`cannot parse time from [%s] %s: %s`, msg.Host, msg.Path, v)
             t = gtime.Now()
         }
         array.Add(&bufferItem {
             mtime     : t.Millisecond(),
-            content   : fmt.Sprintf("%s [%s]\n", strings.TrimRight(v, "\r\n"), msg.Host),
+            content   : v,
             topic     : kafkaMsg.Topic,
             offset    : kafkaMsg.Offset,
             partition : kafkaMsg.Partition,
         })
-        glog.Debug("addToBufferArray:", msg.Path, k, len(msg.Msgs))
+        //glog.Debug("addToBufferArray:", msg.Path, k, len(msg.Msgs))
     }
 }
 

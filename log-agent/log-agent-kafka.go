@@ -1,22 +1,31 @@
 package main
 
 import (
+    "gitee.com/johng/gf/g/container/gmap"
     "gitee.com/johng/gf/g/database/gkafka"
     "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/os/gtime"
+    "gitee.com/johng/gf/g/util/gregex"
     "time"
 )
 
+var (
+    // kafka消息生产者map
+    producers = gmap.NewStringInterfaceMap()
+)
+
 // 创建kafka生产客户端
-func newKafkaClientProducer() *gkafka.Client {
-    if kafkaAddr == "" || kafkaTopic == "" {
+func getKafkaClientProducer(topic string) *gkafka.Client {
+    if kafkaAddr == "" {
         panic("incomplete kafka settings")
     }
-    kafkaConfig               := gkafka.NewConfig()
-    kafkaConfig.Servers        = kafkaAddr
-    kafkaConfig.Topics         = kafkaTopic
-    return gkafka.NewClient(kafkaConfig)
+    return producers.GetOrSetFuncLock(topic, func() interface{} {
+        kafkaConfig               := gkafka.NewConfig()
+        kafkaConfig.Servers        = kafkaAddr
+        kafkaConfig.Topics         = topic
+        return gkafka.NewClient(kafkaConfig)
+    }).(*gkafka.Client)
 }
 
 // 向kafka发送日志内容(异步)
@@ -28,6 +37,11 @@ func sendToKafka(path string, msgs []string, offset int64) {
         Msgs : msgs,
         Time : gtime.Now().String(),
         Host : hostname,
+    }
+    topic    := ""
+    match, _ := gregex.MatchString(`.+kubernetes\.io~empty\-dir/log.*?/(.+?)/.+`, path)
+    if len(match) > 1 {
+        topic = match[1]
     }
     for {
         if msgBytes, err := gjson.Encode(msg); err != nil {
@@ -56,8 +70,8 @@ func sendToKafka(path string, msgs []string, offset int64) {
                         if start > int(offset) {
                             start = 0
                         }
-                        glog.Debugfln("%s %s,\t%d to %d,\t%d[%d:%d]", kafkaTopic, path, start, offset, len(msgBytes), pos, pos + len(pkg.Msg))
-                        if err := kafkaProducer.SyncSend(&gkafka.Message{Value : pkgBytes}); err != nil {
+                        glog.Debugfln("%s %s,\t%d to %d,\t%d[%d:%d]", topic, path, start, offset, len(msgBytes), pos, pos + len(pkg.Msg))
+                        if err := getKafkaClientProducer(topic).SyncSend(&gkafka.Message{Value : pkgBytes}); err != nil {
                             glog.Error(err)
                         } else {
                             break

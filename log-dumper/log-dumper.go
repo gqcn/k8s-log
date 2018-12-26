@@ -81,7 +81,7 @@ func main() {
        if topics, err := kafkaClient.Topics(); err == nil {
           for _, topic := range topics {
               if !topicMap.Contains(topic) {
-                  glog.Debugfln("add new topic handle: %s", topic)
+                  //glog.Debugfln("add new topic handle: %s", topic)
                   topicMap.Set(topic, gmap.NewStringIntMap())
                   go handlerKafkaTopic(topic)
               } else {

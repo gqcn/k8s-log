@@ -1,8 +1,9 @@
 // 容器日志搜集客户端.
 // 1、监控指定目录下的日志文件，记录文件偏移量变化并持久化存储；
+// 2、需要注意的是业务容器需要使用emptyDir卷来存放日志文件；
 // 2、搜集日志文件内容，并批量提交到Kafka；
 // 3、按照既定规则清理日志文件；
-// 4、每天凌晨03:00定时执行清理逻辑；
+// 4、每个小时执行清理逻辑；
 
 package main
 
@@ -11,6 +12,7 @@ import (
     "gitee.com/johng/gf/g/container/gmap"
     "gitee.com/johng/gf/g/container/gset"
     "gitee.com/johng/gf/g/encoding/gjson"
+    "gitee.com/johng/gf/g/os/gcmd"
     "gitee.com/johng/gf/g/os/gcron"
     "gitee.com/johng/gf/g/os/genv"
     "gitee.com/johng/gf/g/os/gfile"
@@ -24,10 +26,10 @@ import (
 )
 
 const (
-    LOG_PATH          = "/var/log/medlinker"         // 默认值，日志目录绝对路径
-    OFFSET_FILE_PATH  = "/var/log/log-agent.offsets" // 默认值，偏移量保存map，用于系统重启时恢复日志偏移量读取，继续文件的搜集位置
+    LOG_PATH          = "/var/lib/kubelet"                   // 默认值，日志目录绝对路径
+    OFFSET_FILE_PATH  = "/var/lib/kubelet/log-agent.offsets" // 默认值，偏移量保存map，用于系统重启时恢复日志偏移量读取，继续文件的搜集位置
     SCAN_INTERVAL     = "10"                         // 默认值，(秒)目录检测间隔，检测新日志文件的创建
-    CLEAN_BUFFER_TIME = "86400"                      // 默认值，(秒)当执行清理时，超过多少时间没有更新则执行删除(默认3小时)
+    CLEAN_BUFFER_TIME = "7200"                       // 默认值，(秒)当执行清理时，超过多少时间没有更新则执行删除(默认3小时)
     CLEAN_MIN_SIZE    = "1024"                       // 默认值，(byte)日志文件最小容量，超过该大小的日志文件才会执行清理(默认1KB)
     CLEAN_MAX_SIZE    = "1073741824"                 // 默认值，(byte)日志文件最大限制，当清理时执行规则处理(默认1GB)；
     SEND_MAX_SIZE     = "10240"                      // 默认值，(byte)每条消息发送时的最大值(包大小限制, 默认10KB)
@@ -58,6 +60,7 @@ var (
     offsetMapSave  = gmap.NewStringIntMap(true)
     watchedFileSet = gset.NewStringSet(true)
     // 以下为通过环境变量传递的参数
+    hostname, _    = os.Hostname()
     logPath        = genv.Get("LOG_PATH", LOG_PATH)
     offsetFilePath = genv.Get("OFFSET_FILE_PATH", OFFSET_FILE_PATH)
     scanInterval   = gconv.TimeDuration(genv.Get("SCAN_INTERVAL", SCAN_INTERVAL))
@@ -65,11 +68,9 @@ var (
     cleanMinSize   = gconv.Int64(genv.Get("CLEAN_MIN_SIZE", CLEAN_MIN_SIZE))
     cleanMaxSize   = gconv.Int64(genv.Get("CLEAN_MAX_SIZE", CLEAN_MAX_SIZE))
     sendMaxSize    = gconv.Int(genv.Get("SEND_MAX_SIZE", SEND_MAX_SIZE))
+    dryrun         = gconv.Bool(gcmd.Option.Get("dryrun", "0"))
     debug          = gconv.Bool(genv.Get("DEBUG", DEBUG))
     kafkaAddr      = genv.Get("KAFKA_ADDR")
-    kafkaTopic     = genv.Get("KAFKA_TOPIC")
-    kafkaProducer  = newKafkaClientProducer()
-    hostname, _    = os.Hostname()
 )
 
 func main() {
@@ -86,26 +87,28 @@ func main() {
 
     // 日志文件目录递归监控循环
     for {
-        if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
+        if list, err := gfile.ScanDir(logPath, "*.log", true); err == nil {
             for _, path := range list {
-                if gfile.IsFile(path) && gfile.Ext(path) != ".offsets" {
-                    if !watchedFileSet.Contains(path) {
-                        watchedFileSet.Add(path)
-                        glog.Println("add log file track:", path)
-                        gfsnotify.Add(path, func(event *gfsnotify.Event) {
-                            glog.Debugfln(event.String())
-                            // 如果日志文件被删除或者重命名，移除监听及记录，以便重新添加监听
-                            if event.IsRename() || event.IsRemove() {
-                                watchedFileSet.Remove(event.Path)
-                                offsetMapCache.Remove(event.Path)
-                                gfsnotify.Remove(event.Path)
-                                return
-                            }
-                            checkLogFile(event.Path)
-                        })
-                        // 第一次添加后需要执行一次内容搜集(不然需要等待下一次文件写入时才开始搜集已有的内容)
-                        checkLogFile(path)
-                    }
+                // 只搜集empty-dir下的日志
+                if !gregex.IsMatchString(`kubernetes\.io~empty\-dir/log.+`, path) {
+                    continue
+                }
+                if !watchedFileSet.Contains(path) {
+                    watchedFileSet.Add(path)
+                    glog.Println("add log file track:", path)
+                    gfsnotify.Add(path, func(event *gfsnotify.Event) {
+                        glog.Debugfln(event.String())
+                        // 如果日志文件被删除或者重命名，移除监听及记录，以便重新添加监听
+                        if event.IsRename() || event.IsRemove() {
+                            watchedFileSet.Remove(event.Path)
+                            offsetMapCache.Remove(event.Path)
+                            gfsnotify.Remove(event.Path)
+                            return
+                        }
+                        checkLogFile(event.Path)
+                    })
+                    // 第一次添加后需要执行一次内容搜集(不然需要等待下一次文件写入时才开始搜集已有的内容)
+                    checkLogFile(path)
                 }
             }
         } else {
@@ -158,7 +161,7 @@ func checkLogFile(path string) {
                     yilian-shop-crm.log: [2018-06-20 14:10:14]  [2.85ms] xxx
                     nginx.log:           10.26.113.161 - - [2018-06-20T10:59:59+08:00] "POST xxx"
                  */
-                if !gregex.IsMatch(`^\[[A-Za-z]+|^\[\d{4,}|^\d{4,}|^(\d+\.\d+\.\d+\.\d+)|^time=`, content) {
+                if !gregex.IsMatch(`(^\[[A-Za-z]+|^\[\d{4,}|^\d{4,}|^\[\d{1,2}[\-/]\w+[\-/]\d{2,}|^\d+\.\d+\.\d+\.\d+|^time=).+`, content) {
                     buffer.Write(content)
                 } else {
                     if msgSize  + len(content) > sendMaxSize {

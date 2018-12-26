@@ -3,48 +3,46 @@ package main
 import (
     "gitee.com/johng/gf/g/encoding/gjson"
     "gitee.com/johng/gf/g/os/gfile"
-    "gitee.com/johng/gf/g/os/gfsnotify"
     "gitee.com/johng/gf/g/os/glog"
     "gitee.com/johng/gf/g/os/gtime"
 )
 
 // 自动清理日志文件
 func cleanLogCron() {
-    if list, err := gfile.ScanDir(logPath, "*", true); err == nil {
+    if list, err := gfile.ScanDir(logPath, "*.log", true); err == nil {
         for _, path := range list {
-            if !gfile.IsFile(path) || gfile.Size(path) < cleanMinSize {
+            if !gfile.IsFile(path) || gfile.Size(path) == 0 {
                 continue
             }
             if gtime.Second() - gfile.MTime(path) > bufferTime {
                 // 一定内没有任何更新操作，如果文件名称带日期则删除，否则truncate
                 err := (error)(nil)
-                if gtime.ParseTimeFromContent(path, "Ymd") != nil || gtime.ParseTimeFromContent(path, "Y-m-d") != nil {
-                    glog.Debug("remove expired file:", path)
-                    err = gfile.Remove(path)
+                if gtime.ParseTimeFromContent(path, "Ymd") != nil ||
+                    gtime.ParseTimeFromContent(path, "Y-m-d") != nil {
+                    glog.Debug("[log-clean] remove expired file:", path)
+                    if !dryrun {
+                        err = gfile.Remove(path)
+                    }
                 } else {
-                    glog.Debug("truncate expired file:", path)
-                    err = gfile.Truncate(path, 0)
+                    glog.Debug("[log-clean] truncate expired file:", path)
+                    if !dryrun {
+                        err = gfile.Truncate(path, 0)
+                    }
                 }
-                if err == nil {
-                    offsetMapCache.Remove(path)
-                    offsetMapSave.Remove(path)
-                    watchedFileSet.Remove(path)
-                    gfsnotify.Remove(path)
-                } else {
+                if err != nil {
                     glog.Error(err)
                 }
             } else {
-                // 判断文件大小，超过指定大小则truncate，注意不移除监听
+                // 判断文件大小，超过指定大小则truncate
                 if gfile.Size(path) > cleanMaxSize {
-                    glog.Debug("truncate size-exceeded file:", path)
-                    if err := gfile.Truncate(path, 0); err == nil {
-                        offsetMapCache.Remove(path)
-                        offsetMapSave.Remove(path)
-                    } else {
-                        glog.Error(err)
+                    glog.Debug("[log-clean] truncate size-exceeded file:", path)
+                    if !dryrun {
+                        if err := gfile.Truncate(path, 0); err != nil {
+                            glog.Error(err)
+                        }
                     }
                 } else {
-                    glog.Debug("leave alone file:", path)
+                    glog.Debug("[log-clean] leave alone file:", path)
                 }
             }
         }
