@@ -114,7 +114,7 @@ func handlerKafkaMessage(kafkaMsg *gkafka.Message) (err error) {
                         } else if v := pkgCache.Get(fmt.Sprintf("%d-%d", pkg.Id, i)); v != nil {
                             msgBuffer.Write(v.([]byte))
                         } else {
-                            glog.Debugfln("waiting for pkg to complete: %d, seq: %d, total: %d", pkg.Id, pkg.Seq, pkg.Total)
+                            // glog.Debugfln("waiting for pkg to complete: %d, seq: %d, total: %d", pkg.Id, pkg.Seq, pkg.Total)
                             break
                         }
                     }
