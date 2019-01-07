@@ -45,12 +45,14 @@ func handlerArchiveCron() {
     for _, path := range paths {
         // 不处理目录、kafka offset文件、已经压缩过的文件
         if gfile.IsDir(path) || gfile.Ext(path) == ".offset" || gfile.Ext(path) == ".bz2" {
+            glog.Debugfln(`ignore file type %s`, path)
             continue
         }
         size := gfile.Size(path)
         if size < maxBytes {
             // 日志文件超过30天不再更新，那么执行归档
             if gtime.Second() - gfile.MTime(path) < expire*86400 {
+                glog.Debugfln(`file not expired %s`, path)
                 continue
             }
         } else {
@@ -74,18 +76,18 @@ func handlerArchiveCron() {
 
         // 进入日志目录
         if err := os.Chdir(gfile.Dir(path)); err != nil {
-            glog.Error(err)
+            glog.Error(path, err)
             continue
         }
         // 执行日志文件归档，使用bzip2压缩格式
         cmd := fmt.Sprintf("tar -jvcf %s %s",  archivePath, gfile.Basename(path))
-        glog.Debugfln(cmd)
+        glog.Debug(cmd)
         if err := gproc.ShellRun(cmd); err == nil {
             if err := gfile.Remove(path); err != nil {
-                glog.Error(err)
+                glog.Error(path, err)
             }
         } else {
-            glog.Error(err)
+            glog.Error(path, err)
         }
     }
 }
