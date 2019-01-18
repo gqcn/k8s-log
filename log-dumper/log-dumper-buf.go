@@ -31,7 +31,7 @@ func addToBufferArray(msg *Message, kafkaMsg *gkafka.Message) {
             } else {
                 return 1
             }
-        }, true)
+        })
     }).(*garray.SortedArray)
 
     // 判断缓冲区阈值

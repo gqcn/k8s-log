@@ -35,7 +35,7 @@ func handlerSavingContent() {
                 }
                 buffer       := bytes.NewBuffer(nil)
                 bufferCount  := 0
-                tmpOffsetMap := gmap.NewStringIntMap(false)
+                tmpOffsetMap := gmap.NewStringIntMap(true)
                 for i := 0; i < array.Len(); i++ {
                     item := array.Get(0).(*bufferItem)
                     // 超过缓冲区时间则写入文件
