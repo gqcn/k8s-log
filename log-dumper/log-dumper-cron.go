@@ -2,12 +2,12 @@ package main
 
 import (
     "bytes"
-    "gitee.com/johng/gf/g/container/garray"
-    "gitee.com/johng/gf/g/container/gmap"
-    "gitee.com/johng/gf/g/os/gfile"
-    "gitee.com/johng/gf/g/os/glog"
-    "gitee.com/johng/gf/g/os/gmlock"
-    "gitee.com/johng/gf/g/os/gtime"
+    "github.com/gogf/gf/g/container/garray"
+    "github.com/gogf/gf/g/container/gmap"
+    "github.com/gogf/gf/g/os/gfile"
+    "github.com/gogf/gf/g/os/glog"
+    "github.com/gogf/gf/g/os/gmlock"
+    "github.com/gogf/gf/g/os/gtime"
     "time"
 )
 

@@ -2,10 +2,10 @@ package main
 
 import (
     "fmt"
-    "gitee.com/johng/gf/g/container/gmap"
-    "gitee.com/johng/gf/g/os/gfile"
-    "gitee.com/johng/gf/g/util/gconv"
-    "gitee.com/johng/gf/g/util/gregex"
+    "github.com/gogf/gf/g/container/gmap"
+    "github.com/gogf/gf/g/os/gfile"
+    "github.com/gogf/gf/g/util/gconv"
+    "github.com/gogf/gf/g/text/gregex"
 )
 
 // 生成kafka消费offset文件路径

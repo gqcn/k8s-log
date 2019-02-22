@@ -1,11 +1,11 @@
 package main
 
 import (
-    "gitee.com/johng/gf/g/container/garray"
-    "gitee.com/johng/gf/g/database/gkafka"
-    "gitee.com/johng/gf/g/os/gtime"
-    "gitee.com/johng/gf/g/util/gconv"
-    "gitee.com/johng/gf/g/util/gstr"
+    "github.com/gogf/gf/g/container/garray"
+    "github.com/gogf/gf/gkafka"
+    "github.com/gogf/gf/g/os/gtime"
+    "github.com/gogf/gf/g/util/gconv"
+    "github.com/gogf/gf/g/text/gstr"
     "time"
 )
 

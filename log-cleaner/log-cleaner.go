@@ -3,11 +3,11 @@
 package main
 
 import (
-    "gitee.com/johng/gf/g/os/genv"
-    "gitee.com/johng/gf/g/os/gfile"
-    "gitee.com/johng/gf/g/os/glog"
-    "gitee.com/johng/gf/g/os/gtime"
-    "gitee.com/johng/gf/g/util/gconv"
+    "github.com/gogf/gf/g/os/genv"
+    "github.com/gogf/gf/g/os/gfile"
+    "github.com/gogf/gf/g/os/glog"
+    "github.com/gogf/gf/g/os/gtime"
+    "github.com/gogf/gf/g/util/gconv"
     "time"
 )
 

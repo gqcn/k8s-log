@@ -12,12 +12,12 @@ package main
 
 import (
     "fmt"
-    "gitee.com/johng/gf/g/container/gmap"
-    "gitee.com/johng/gf/g/os/gcache"
-    "gitee.com/johng/gf/g/os/gcron"
-    "gitee.com/johng/gf/g/os/genv"
-    "gitee.com/johng/gf/g/os/glog"
-    "gitee.com/johng/gf/g/util/gconv"
+    "github.com/gogf/gf/g/container/gmap"
+    "github.com/gogf/gf/g/os/gcache"
+    "github.com/gogf/gf/g/os/gcron"
+    "github.com/gogf/gf/g/os/genv"
+    "github.com/gogf/gf/g/os/glog"
+    "github.com/gogf/gf/g/util/gconv"
     "time"
 )
 

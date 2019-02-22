@@ -1,12 +1,12 @@
 package main
 
 import (
-    "gitee.com/johng/gf/g/container/gmap"
-    "gitee.com/johng/gf/g/database/gkafka"
-    "gitee.com/johng/gf/g/encoding/gjson"
-    "gitee.com/johng/gf/g/os/glog"
-    "gitee.com/johng/gf/g/os/gtime"
-    "gitee.com/johng/gf/g/util/gregex"
+    "github.com/gogf/gf/g/container/gmap"
+    "github.com/gogf/gf/gkafka"
+    "github.com/gogf/gf/g/encoding/gjson"
+    "github.com/gogf/gf/g/os/glog"
+    "github.com/gogf/gf/g/os/gtime"
+    "github.com/gogf/gf/g/text/gregex"
     "time"
 )
 
