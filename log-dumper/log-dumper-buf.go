@@ -2,7 +2,7 @@ package main
 
 import (
     "github.com/gogf/gf/g/container/garray"
-    "github.com/gogf/gf/gkafka"
+    "github.com/gogf/gkafka"
     "github.com/gogf/gf/g/os/gtime"
     "github.com/gogf/gf/g/util/gconv"
     "github.com/gogf/gf/g/text/gstr"
@@ -22,7 +22,7 @@ type bufferItem struct {
 func addToBufferArray(msg *Message, kafkaMsg *gkafka.Message) {
     // array是并发安全的
     array := bufferMap.GetOrSetFuncLock(msg.Path, func() interface{} {
-        return garray.NewSortedArray(0, func(v1, v2 interface{}) int {
+        return garray.NewSortedArray(func(v1, v2 interface{}) int {
             item1 := v1.(*bufferItem)
             item2 := v2.(*bufferItem)
             // 两个日志项只能排前面或者后面，不能存在相等情况，否则会覆盖

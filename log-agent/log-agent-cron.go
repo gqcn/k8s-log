@@ -15,19 +15,11 @@ func cleanLogCron() {
                 continue
             }
             if gtime.Second() - gfile.MTime(path) > bufferTime {
-                // 一定内没有任何更新操作，如果文件名称带日期则删除，否则truncate
+                // 判断文件时间
                 err := (error)(nil)
-                if gtime.ParseTimeFromContent(path, "Ymd") != nil ||
-                    gtime.ParseTimeFromContent(path, "Y-m-d") != nil {
-                    glog.Debug("[log-clean] remove expired file:", path)
-                    if !dryrun {
-                        err = gfile.Remove(path)
-                    }
-                } else {
-                    glog.Debug("[log-clean] truncate expired file:", path)
-                    if !dryrun {
-                        err = gfile.Truncate(path, 0)
-                    }
+                glog.Debug("[log-clean] truncate expired file:", path)
+                if !dryrun {
+                    err = gfile.Truncate(path, 0)
                 }
                 if err != nil {
                     glog.Error(err)

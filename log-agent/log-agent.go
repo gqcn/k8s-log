@@ -55,10 +55,10 @@ type Message struct {
 
 var (
     // 运行时记录日志文件搜集的offset
-    offsetMapCache = gmap.NewStringIntMap(true)
+    offsetMapCache = gmap.NewStringIntMap()
     // 真实提交成功的offset，用于持久化保存
-    offsetMapSave  = gmap.NewStringIntMap(true)
-    watchedFileSet = gset.NewStringSet(true)
+    offsetMapSave  = gmap.NewStringIntMap()
+    watchedFileSet = gset.NewStringSet()
     // 以下为通过环境变量传递的参数
     hostname, _    = os.Hostname()
     logPath        = genv.Get("LOG_PATH", LOG_PATH)
@@ -97,7 +97,7 @@ func main() {
                     watchedFileSet.Add(path)
                     glog.Println("add log file track:", path)
                     gfsnotify.Add(path, func(event *gfsnotify.Event) {
-                        glog.Debugfln(event.String())
+                        //glog.Debugfln(event.String())
                         // 如果日志文件被删除或者重命名，移除监听及记录，以便重新添加监听
                         if event.IsRename() || event.IsRemove() {
                             watchedFileSet.Remove(event.Path)

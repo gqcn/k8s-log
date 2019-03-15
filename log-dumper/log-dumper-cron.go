@@ -35,7 +35,7 @@ func handlerSavingContent() {
                 }
                 buffer       := bytes.NewBuffer(nil)
                 bufferCount  := 0
-                tmpOffsetMap := gmap.NewStringIntMap(true)
+                tmpOffsetMap := gmap.NewStringIntMap()
                 for i := 0; i < array.Len(); i++ {
                     item := array.Get(0).(*bufferItem)
                     // 超过缓冲区时间则写入文件
@@ -60,7 +60,7 @@ func handlerSavingContent() {
                     } else {
                         // 真实写入成功之后才写入kafka offset到全局的offset哈希表中，以便磁盘化
                         if tmpOffsetMap.Size() > 0 {
-                            for key, offset := range tmpOffsetMap.Clone() {
+                            for key, offset := range tmpOffsetMap.Map() {
                                 topic, partition := parseOffsetKey(key)
                                 if topic != "" {
                                     setOffsetMap(topic, partition, offset)

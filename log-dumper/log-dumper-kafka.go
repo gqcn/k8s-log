@@ -5,7 +5,7 @@ import (
     "errors"
     "fmt"
     "github.com/gogf/gf/g/container/gmap"
-    "github.com/gogf/gf/gkafka"
+    "github.com/gogf/gkafka"
     "github.com/gogf/gf/g/encoding/gjson"
     "github.com/gogf/gf/g/os/glog"
     "github.com/gogf/gf/g/os/gtime"
